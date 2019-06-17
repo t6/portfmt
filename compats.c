@@ -106,6 +106,9 @@ warnx(const char *fmt, ...)
  * Written by Ted Unangst
  */
 
+#if HAVE_MEMSET_S
+#define __STDC_WANT_LIB_EXT1__ 1
+#endif
 #include <string.h>
 
 /*
