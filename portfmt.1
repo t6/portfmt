@@ -80,6 +80,21 @@ onto a single line.
 You can integrate Portfmt into your editor to conveniently run it
 only on parts of the port, e.g., to reformat USES after adding a
 new item to it.
+.Ss Emacs
+Add this to
+.Pa ~/.emacs.d/init.el
+to format the current region with
+.Sy C-c p :
+.Bd -literal -offset indent
+(defun portfmt (&optional b e)
+  "PORTFMT(1) on region"
+  (interactive "r")
+  (shell-command-on-region b e "portfmt " (current-buffer) t
+                           "*portfmt errors*" t))
+.Ed
+.Bd -literal -offset indent
+(define-key makefile-bsdmake-mode-map (kbd "C-c p") 'portfmt)
+.Ed
 .Ss Kakoune
 Add this to
 .Pa ~/.config/kak/kakrc

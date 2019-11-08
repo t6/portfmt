@@ -83,6 +83,20 @@ You can integrate Portfmt into your editor to conveniently run it
 only on parts of the port, e.g., to reformat `USES` after adding a
 new item to it.
 
+### Emacs
+
+Add this to `~/.emacs.d/init.el` to format the current region with
+`C-c p`.
+
+```
+(defun portfmt (&optional b e)
+  "PORTFMT(1) on region"
+  (interactive "r")
+  (shell-command-on-region b e "portfmt " (current-buffer) t
+                           "*portfmt errors*" t))
+(define-key makefile-bsdmake-mode-map (kbd "C-c p") 'portfmt)
+```
+
 ### Kakoune
 
 Add this to `~/.config/kak/kakrc` for filtering the current selection
