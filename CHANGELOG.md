@@ -27,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Recognize more framework targets
 - Catch up with FreeBSD Ports:
   - Remove support for `PKGUPGRADE` and friends
+  - Add `USES=ansible`, `USES=cmake:testing` support
 - portclippy, portscan: Report unknown target sources too
 - portscan: default `-p` to `/usr/ports` or the value of `PORTSDIR` in the environment
 - portedit, portfmt: Stop messing with inline comments.  This should let it
