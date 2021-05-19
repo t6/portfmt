@@ -48,6 +48,7 @@
 #include <libias/array.h>
 #include <libias/diff.h>
 #include <libias/set.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "capsicum_helpers.h"

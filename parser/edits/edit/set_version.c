@@ -39,7 +39,7 @@
 #include <string.h>
 
 #include <libias/array.h>
-#include <libias/util.h>
+#include <libias/str.h>
 
 #include "parser.h"
 #include "parser/edits.h"
@@ -133,7 +133,7 @@ is_git_describe_version(const char *ver, char **distversion, char **prefix, char
 	}
 
 	if (distversion != NULL) {
-		*distversion = xstrndup(ver + prefix_index + 1, suffix_index - prefix_index - 1);
+		*distversion = str_substr(ver, prefix_index + 1, suffix_index);
 	}
 
 	return 1;

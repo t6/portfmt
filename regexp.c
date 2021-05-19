@@ -35,6 +35,7 @@
 #include <regex.h>
 #include <stdlib.h>
 
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "regexp.h"

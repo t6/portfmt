@@ -35,6 +35,7 @@
 
 #include <libias/array.h>
 #include <libias/mempool.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "target.h"
@@ -86,7 +87,7 @@ consume_token(const char *line, size_t pos, char startchar, char endchar)
 static void
 add_name(struct Mempool *pool, struct Array *names, const char *buf, size_t start, size_t i)
 {
-	char *tmp = xstrndup(buf + start, i - start);
+	char *tmp = str_substr(buf, start, i);
 	char *name = str_trim(tmp);
 	free(tmp);
 	if (*name) {
@@ -157,8 +158,8 @@ struct Target *
 target_new(char *buf)
 {
 	struct Mempool *pool = mempool_new();
-	struct Array *names = mempool_add(pool, array_new(), array_free);
-	struct Array *deps = mempool_add(pool, array_new(), array_free);
+	struct Array *names = mempool_array(pool);
+	struct Array *deps = mempool_array(pool);
 	const char *after_target = consume_names(pool, buf, names, 0);
 	if (after_target == NULL) {
 		mempool_free(pool);

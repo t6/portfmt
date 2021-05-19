@@ -103,7 +103,6 @@ int should_sort(struct Parser *, struct Variable *);
 int skip_conditional(struct Token *, int *);
 int skip_dedup(struct Parser *, struct Variable *);
 int skip_goalcol(struct Parser *, struct Variable *);
-char *sub(enum RegularExpression, const char *, const char *);
 int target_command_wrap_after_each_token(const char *);
 int target_command_should_wrap(const char *);
 enum BlockType variable_order_block(struct Parser *, const char *, struct Set **);

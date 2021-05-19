@@ -43,6 +43,7 @@
 #include <libias/map.h>
 #include <libias/mempool.h>
 #include <libias/set.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "conditional.h"
@@ -135,7 +136,7 @@ skip_developer_only(enum SkipDeveloperState state, struct Token *t)
 static struct Array *
 get_variables(struct Mempool *pool, struct Array *tokens)
 {
-	struct Array *vars = mempool_add(pool, array_new(), array_free);
+	struct Array *vars = mempool_array(pool);
 	enum SkipDeveloperState developer_only = SKIP_DEVELOPER_INIT;
 	ARRAY_FOREACH(tokens, struct Token *, t) {
 		if (is_include_bsd_port_mk(t)) {
@@ -196,7 +197,7 @@ get_all_unknown_variables_filter(struct Parser *parser, const char *key, void *u
 static struct Set *
 get_all_unknown_variables(struct Mempool *pool, struct Parser *parser)
 {
-	struct Set *unknowns = mempool_add(pool, set_new(get_all_unknown_variables_row_compare, NULL, row_free), set_free);
+	struct Set *unknowns = mempool_set(pool, get_all_unknown_variables_row_compare, NULL, row_free);
 	struct ParserEditOutput param = { get_all_unknown_variables_filter, NULL, NULL, NULL, get_all_unknown_variables_helper, unknowns, 0 };
 	if (parser_edit(parser, output_unknown_variables, &param) != PARSER_ERROR_OK) {
 		return unknowns;
@@ -234,7 +235,7 @@ get_hint(struct Parser *parser, const char *var, enum BlockType block, struct Se
 static struct Array *
 variable_list(struct Mempool *pool, struct Parser *parser, struct Array *tokens)
 {
-	struct Array *output = mempool_add(pool, array_new(), array_free);
+	struct Array *output = mempool_array(pool);
 	struct Array *vars = get_variables(pool, tokens);
 
 	enum BlockType block = BLOCK_UNKNOWN;
@@ -261,7 +262,7 @@ variable_list(struct Mempool *pool, struct Parser *parser, struct Array *tokens)
 static struct Array *
 target_list(struct Mempool *pool, struct Array *tokens)
 {
-	struct Array *targets = mempool_add(pool, array_new(), array_free);
+	struct Array *targets = mempool_array(pool);
 	enum SkipDeveloperState developer_only = SKIP_DEVELOPER_INIT;
 	ARRAY_FOREACH(tokens, struct Token *, t) {
 		developer_only = skip_developer_only(developer_only, t);
@@ -291,8 +292,8 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 	array_sort(vars, compare_order, parser);
 
 	struct Set *uses_candidates = NULL;
-	struct Array *target = mempool_add(pool, array_new(), array_free);
-	struct Array *unknowns = mempool_add(pool, array_new(), array_free);
+	struct Array *target = mempool_array(pool);
+	struct Array *unknowns = mempool_array(pool);
 	enum BlockType block = BLOCK_UNKNOWN;
 	enum BlockType last_block = BLOCK_UNKNOWN;
 	int flag = 0;
@@ -352,7 +353,7 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 			struct Array *hints = map_get(group, var->name);
 			maxlen = MAX(maxlen, strlen(var->name));
 			if (!hints) {
-				hints = mempool_add(pool, array_new(), array_free);
+				hints = mempool_array(pool);
 				map_add(group, var->name, hints);
 			}
 			if (var->hint) {
@@ -410,7 +411,7 @@ check_target_order(struct Parser *parser, struct Array *tokens, int no_color, in
 
 	struct Array *targets = target_list(pool, tokens);
 
-	struct Array *origin = mempool_add(pool, array_new(), array_free);
+	struct Array *origin = mempool_array(pool);
 	if (status_var) {
 		row(pool, origin, xstrdup(""), NULL);
 	}
@@ -423,7 +424,7 @@ check_target_order(struct Parser *parser, struct Array *tokens, int no_color, in
 
 	array_sort(targets, compare_target_order, parser);
 
-	struct Array *target = mempool_add(pool, array_new(), array_free);
+	struct Array *target = mempool_array(pool);
 	if (status_var) {
 		row(pool, target, xstrdup(""), NULL);
 	}
@@ -434,7 +435,7 @@ check_target_order(struct Parser *parser, struct Array *tokens, int no_color, in
 		}
 	}
 
-	struct Array *unknowns = mempool_add(pool, array_new(), array_free);
+	struct Array *unknowns = mempool_array(pool);
 	ARRAY_FOREACH(targets, char *, name) {
 		if (!is_known_target(parser, name) && name[0] != '_') {
 			array_append(unknowns, mempool_add(pool, str_printf("%s:", name), free));

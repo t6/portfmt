@@ -35,7 +35,7 @@
 #include <string.h>
 
 #include <libias/array.h>
-#include <libias/util.h>
+#include <libias/str.h>
 
 #include "parser.h"
 #include "parser/edits.h"

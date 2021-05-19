@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "regexp.h"
@@ -78,7 +79,7 @@ variable_new(const char *buf)
 		break;
 	}
 
-	char *tmp = str_substr(buf, 0, strlen(buf) - i);
+	char *tmp = xstrndup(buf, strlen(buf) - i);
 	char *name = str_trimr(tmp);
 	if (strcmp(name, "") == 0) {
 		free(name);

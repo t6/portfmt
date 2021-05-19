@@ -52,6 +52,7 @@
 #include <libias/map.h>
 #include <libias/mempool.h>
 #include <libias/set.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "conditional.h"
@@ -466,6 +467,8 @@ parser_error_tostring(struct Parser *parser)
 			buf = str_printf("line %s: parse error", lines);
 		}
 		break;
+	default:
+		abort();
 	}
 
 	free(lines);
@@ -621,17 +624,16 @@ parser_find_goalcols(struct Parser *parser)
 	size_t last = 0;
 	ssize_t tokens_start = -1;
 	ssize_t tokens_end = -1;
-	for (size_t i = 0; i < array_len(parser->tokens); i++) {
-		struct Token *t = array_get(parser->tokens, i);
+	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		switch (token_type(t)) {
 		case VARIABLE_END:
 		case VARIABLE_START:
 			break;
 		case VARIABLE_TOKEN:
 			if (tokens_start == -1) {
-				tokens_start = i;
+				tokens_start = t_index;
 			}
-			tokens_end = i;
+			tokens_end = t_index;
 
 			struct Variable *var = token_variable(t);
 			if (var && skip_goalcol(parser, var)) {
@@ -660,7 +662,7 @@ parser_find_goalcols(struct Parser *parser)
 			if (tokens_start != -1) {
 				parser_propagate_goalcol(parser, last, tokens_end, moving_goalcol);
 				moving_goalcol = 0;
-				last = i;
+				last = t_index;
 				tokens_start = -1;
 			}
 			break;
@@ -760,8 +762,8 @@ print_token_array(struct Parser *parser, struct Array *tokens)
 	size_t rowsz = 8192;
 	char *row = xmalloc(rowsz);
 	struct Token *token = NULL;
-	for (size_t i = 0; i < array_len(tokens); i++) {
-		token = array_get(tokens, i);
+	ARRAY_FOREACH(tokens, struct Token *, t) {
+		token = t;
 		size_t tokenlen = strlen(token_data(token));
 		if (tokenlen == 0) {
 			continue;
@@ -823,8 +825,8 @@ parser_output_print_target_command(struct Parser *parser, struct Array *tokens)
 	}
 
 	SCOPE_MEMPOOL(pool);
-	struct Array *commands = mempool_add(pool, array_new(), array_free);
-	struct Array *merge = mempool_add(pool, array_new(), array_free);
+	struct Array *commands = mempool_array(pool);
+	struct Array *merge = mempool_array(pool);
 	char *command = NULL;
 	int wrap_after = 0;
 	ARRAY_FOREACH(tokens, struct Token *, t) {
@@ -880,7 +882,7 @@ parser_output_print_target_command(struct Parser *parser, struct Array *tokens)
 	const char *start = startlv0;
 
 	// Find the places we need to wrap to the next line.
-	struct Set *wraps = mempool_add(pool, set_new(NULL, NULL, NULL), set_free);
+	struct Set *wraps = mempool_set(pool, NULL, NULL, NULL);
 	size_t column = 8;
 	int complexity = 0;
 	size_t command_i = 0;
@@ -1061,12 +1063,11 @@ parser_output_sort_opt_use(struct Parser *parser, struct Array *arr)
 		suffix++;
 
 		char *prefix = mempool_add(pool, str_map(token_data(t), suffix - token_data(t), toupper), free);
-		size_t bufsz = strlen(token_data(t)) + 1;
-		char *buf = mempool_add(pool, xmalloc(bufsz), free);
+		struct Array *buf = mempool_array(pool);
 		if (opt_use) {
-			struct Array *values = mempool_add(pool, array_new(), array_free);
+			struct Array *values = mempool_array(pool);
 			char *var = mempool_add(pool, str_printf("USE_%s", prefix), free);
-			xstrlcpy(buf, prefix, bufsz);
+			array_append(buf, prefix);
 			char *s, *token;
 			s = mempool_add(pool, xstrdup(suffix), free);
 			while ((token = strsep(&s, ",")) != NULL) {
@@ -1081,17 +1082,17 @@ parser_output_sort_opt_use(struct Parser *parser, struct Array *arr)
 
 			array_sort(values, compare_tokens, parser);
 			ARRAY_FOREACH(values, struct Token *, t2) {
-				xstrlcat(buf, token_data(t2), bufsz);
+				array_append(buf, token_data(t2));
 				if (t2_index < array_len(values) - 1) {
-					xstrlcat(buf, ",", bufsz);
+					array_append(buf, ",");
 				}
 			}
 		} else {
-			xstrlcpy(buf, prefix, bufsz);
-			xstrlcat(buf, suffix, bufsz);
+			array_append(buf, prefix);
+			array_append(buf, suffix);
 		}
 
-		struct Token *t2 = token_clone(t, buf);
+		struct Token *t2 = token_clone(t, mempool_add(pool, str_join(buf, ""), free));
 		parser_mark_for_gc(parser, t2);
 		array_append(up, t2);
 	}
@@ -1192,21 +1193,20 @@ parser_output_category_makefile_reformatted(struct Parser *parser)
 	// We do not support editing/formatting the top level Makefile.
 	const char *indent = "    ";
 	SCOPE_MEMPOOL(pool);
-	struct Array *tokens = mempool_add(pool, array_new(), array_free);
-	for (size_t i = 0; i < array_len(parser->tokens); i++) {
-		struct Token *t = array_get(parser->tokens, i);
+	struct Array *tokens = mempool_array(pool);
+	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		switch (token_type(t)) {
-		case CONDITIONAL_END:
-			for (size_t j = 0; j < array_len(tokens); j++) {
-				struct Token *o = array_get(tokens, j);
+		case CONDITIONAL_END: {
+			size_t tokens_len = array_len(tokens);
+			ARRAY_FOREACH(tokens, struct Token *, o) {
 				parser_enqueue_output(parser, token_data(o));
-				if ((j + 1) < array_len(tokens)) {
+				if ((o_index + 1) < tokens_len) {
 					parser_enqueue_output(parser, " ");
 				}
 			}
 			parser_enqueue_output(parser, "\n");
 			break;
-		case CONDITIONAL_START:
+		} case CONDITIONAL_START:
 			if (conditional_type(token_conditional(t)) != COND_INCLUDE) {
 				parser->error = PARSER_ERROR_UNSPECIFIED;
 				char *buf = conditional_tostring(token_conditional(t));
@@ -1228,18 +1228,17 @@ parser_output_category_makefile_reformatted(struct Parser *parser)
 				parser_enqueue_output(parser, indent);
 				parser_enqueue_output(parser, varname);
 				parser_enqueue_output(parser, " = ");
-				for (size_t j = 0; j < array_len(tokens); j++) {
-					struct Token *o = array_get(tokens, j);
+				size_t tokens_len = array_len(tokens);
+				ARRAY_FOREACH(tokens, struct Token *, o) {
 					parser_enqueue_output(parser, token_data(o));
-					if ((j + 1) < array_len(tokens)) {
+					if ((o_index + 1) < tokens_len) {
 						parser_enqueue_output(parser, " ");
 					}
 				}
 				parser_enqueue_output(parser, "\n");
 			} else if (strcmp(varname, "SUBDIR") == 0) {
 				array_sort(tokens, category_makefile_compare, NULL);
-				for (size_t j = 0; j < array_len(tokens); j++) {
-					struct Token *o = array_get(tokens, j);
+				ARRAY_FOREACH(tokens, struct Token *, o) {
 					parser_enqueue_output(parser, indent);
 					parser_enqueue_output(parser, varname);
 					parser_enqueue_output(parser, " += ");
@@ -1283,8 +1282,7 @@ parser_output_reformatted(struct Parser *parser)
 	struct Array *target_arr = array_new();
 	struct Array *variable_arr = array_new();
 	struct Token *prev = NULL;
-	for (size_t i = 0; i < array_len(parser->tokens); i++) {
-		struct Token *o = array_get(parser->tokens, i);
+	ARRAY_FOREACH(parser->tokens, struct Token *, o) {
 		int edited = set_contains(parser->edited, o);
 		switch (token_type(o)) {
 		case CONDITIONAL_END:
@@ -1401,8 +1399,7 @@ parser_output_diff(struct Parser *parser)
 		return;
 	}
 
-	for (size_t i = 0; i < array_len(parser->result); i++) {
-		char *line = array_get(parser->result, i);
+	ARRAY_FOREACH(parser->result, char *, line) {
 		free(line);
 	}
 	array_truncate(parser->result);
@@ -1443,8 +1440,7 @@ parser_output_dump_tokens(struct Parser *parser)
 	}
 
 	size_t maxvarlen = 0;
-	for (size_t i = 0; i < array_len(parser->tokens); i++) {
-		struct Token *o = array_get(parser->tokens, i);
+	ARRAY_FOREACH(parser->tokens, struct Token *, o) {
 		if (token_type(o) == VARIABLE_START && token_variable(o)) {
 			char *var = variable_tostring(token_variable(o));
 			maxvarlen = MAX(maxvarlen, strlen(var));
@@ -1453,8 +1449,7 @@ parser_output_dump_tokens(struct Parser *parser)
 	}
 
 	struct Array *vars = array_new();
-	for (size_t i = 0; i < array_len(parser->tokens); i++) {
-		struct Token *t = array_get(parser->tokens, i);
+	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		const char *type;
 		switch (token_type(t)) {
 		case VARIABLE_END:
@@ -1671,7 +1666,7 @@ parser_read_internal(struct Parser *parser)
 		pos = consume_conditional(buf);
 		if (pos > 0) {
 			free(parser->condname);
-			char *tmp = str_substr(buf, 0, pos);
+			char *tmp = xstrndup(buf, pos);
 			parser->condname = str_trimr(tmp);
 			free(tmp);
 
@@ -1698,7 +1693,7 @@ parser_read_internal(struct Parser *parser)
 	pos = consume_conditional(buf);
 	if (pos > 0) {
 		free(parser->condname);
-		char *tmp = str_substr(buf, 0, pos);
+		char *tmp = xstrndup(buf, pos);
 		parser->condname = str_trimr(tmp);
 		free(tmp);
 
@@ -1725,7 +1720,7 @@ var:
 			parser->error = PARSER_ERROR_BUFFER_TOO_SMALL;
 			goto next;
 		}
-		char *tmp = str_substr(buf, 0, pos);
+		char *tmp = xstrndup(buf, pos);
 		parser->varname = str_trim(tmp);
 		free(tmp);
 		parser_append_token(parser, VARIABLE_START, NULL);
@@ -1864,8 +1859,8 @@ parser_output_write_to_file(struct Parser *parser, FILE *fp)
 	}
 
 	/* Collect garbage */
-	for (size_t i = 0; i < array_len(parser->result); i++) {
-		free(array_get(parser->result, i));
+	ARRAY_FOREACH(parser->result, char *, line) {
+		free(line);
 	}
 	array_truncate(parser->result);
 	free(iov);
@@ -1968,8 +1963,8 @@ parser_meta_values(struct Parser *parser, const char *var, struct Set *set)
 {
 	struct Array *tmp = NULL;
 	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
-		for (size_t i = 0; i < array_len(tmp); i++) {
-			parser_meta_values_helper(set, var, array_get(tmp, i));
+		ARRAY_FOREACH(tmp, char *, value) {
+			parser_meta_values_helper(set, var, value);
 		}
 		array_free(tmp);
 	}
@@ -1978,8 +1973,7 @@ parser_meta_values(struct Parser *parser, const char *var, struct Set *set)
 	SET_FOREACH(options, const char *, opt) {
 		char *buf = str_printf("%s_VARS", opt);
 		if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
-			for (size_t i = 0; i < array_len(tmp); i++) {
-				char *value = array_get(tmp, i);
+			ARRAY_FOREACH(tmp, char *, value) {
 				char *buf = str_printf("%s+=", var);
 				if (str_startswith(value, buf)) {
 					value += strlen(buf);
@@ -2002,8 +1996,7 @@ parser_meta_values(struct Parser *parser, const char *var, struct Set *set)
 
 		buf = str_printf("%s_VARS_OFF", opt);
 		if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
-			for (size_t i = 0; i < array_len(tmp); i++) {
-				char *value = array_get(tmp, i);
+			ARRAY_FOREACH(tmp, char *, value) {
 				char *buf = str_printf("%s+=", var);
 				if (str_startswith(value, buf)) {
 					value += strlen(buf);
@@ -2031,8 +2024,8 @@ parser_meta_values(struct Parser *parser, const char *var, struct Set *set)
 #endif
 			buf = str_printf("%s_%s", opt, var);
 			if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
-				for (size_t i = 0; i < array_len(tmp); i++) {
-					parser_meta_values_helper(set, var, array_get(tmp, i));
+				ARRAY_FOREACH(tmp, char *, value) {
+					parser_meta_values_helper(set, var, value);
 				}
 				array_free(tmp);
 			}
@@ -2040,8 +2033,8 @@ parser_meta_values(struct Parser *parser, const char *var, struct Set *set)
 
 			buf = str_printf("%s_%s_OFF", opt, var);
 			if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
-				for (size_t i = 0; i < array_len(tmp); i++) {
-					parser_meta_values_helper(set, var, array_get(tmp, i));
+				ARRAY_FOREACH(tmp, char *, value) {
+					parser_meta_values_helper(set, var, value);
 				}
 				array_free(tmp);
 			}
@@ -2082,8 +2075,7 @@ parser_port_options_add_from_var(struct Parser *parser, const char *var)
 {
 	struct Array *optdefine = NULL;
 	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, &optdefine, NULL)) {
-		for (size_t i = 0; i < array_len(optdefine); i++) {
-			char *opt = array_get(optdefine, i);
+		ARRAY_FOREACH(optdefine, char *, opt) {
 			if (!set_contains(parser->metadata[PARSER_METADATA_OPTIONS], opt)) {
 				set_add(parser->metadata[PARSER_METADATA_OPTIONS], xstrdup(opt));
 			}
@@ -2259,8 +2251,7 @@ parser_lookup_target(struct Parser *parser, const char *name, struct Array **ret
 {
 	struct Target *target = NULL;
 	struct Array *tokens = array_new();
-	for (size_t i = 0; i < array_len(parser->tokens); i++) {
-		struct Token *t = array_get(parser->tokens, i);
+	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		switch (token_type(t)) {
 		case TARGET_START:
 			array_truncate(tokens);
@@ -2313,8 +2304,7 @@ parser_lookup_variable(struct Parser *parser, const char *name, enum ParserLooku
 	struct Array *tokens = array_new();
 	struct Array *comments = array_new();
 	int skip = 0;
-	for (size_t i = 0; i < array_len(parser->tokens); i++) {
-		struct Token *t = array_get(parser->tokens, i);
+	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		if ((behavior & PARSER_LOOKUP_IGNORE_VARIABLES_IN_CONDITIIONALS) &&
 		    skip_conditional(t, &skip)) {
 			continue;

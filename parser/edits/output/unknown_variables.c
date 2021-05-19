@@ -36,6 +36,7 @@
 
 #include <libias/array.h>
 #include <libias/set.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "parser.h"

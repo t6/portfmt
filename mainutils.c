@@ -42,6 +42,7 @@
 #include <unistd.h>
 
 #include <libias/array.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "capsicum_helpers.h"

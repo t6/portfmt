@@ -39,7 +39,7 @@
 
 #include <libias/array.h>
 #include <libias/mempool.h>
-#include <libias/util.h>
+#include <libias/str.h>
 
 #include "parser.h"
 #include "parser/edits.h"
@@ -51,7 +51,7 @@ static char *
 get_merge_script(struct Parser *parser, const char *variable, enum ParserError *error, char **error_msg)
 {
 	SCOPE_MEMPOOL(pool);
-	struct Array *script = mempool_add(pool, array_new(), array_free);
+	struct Array *script = mempool_array(pool);
 
 	struct Variable *var;
 	if (strcmp(variable, "PORTEPOCH") == 0) {

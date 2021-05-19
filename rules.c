@@ -41,7 +41,9 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "conditional.h"
@@ -2202,6 +2204,7 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 int
 compare_order(const void *ap, const void *bp, void *userdata)
 {
+	SCOPE_MEMPOOL(pool);
 	struct Parser *parser = userdata;
 	const char *a = *(const char **)ap;
 	const char *b = *(const char **)bp;
@@ -2253,6 +2256,7 @@ compare_order(const void *ap, const void *bp, void *userdata)
 		}
 		assert(ahelper != NULL && aprefix != NULL);
 		assert(bhelper != NULL && bprefix != NULL);
+		mempool_add_multi(pool, free, aprefix, ahelper, bprefix, bhelper, NULL);
 
 		// Only compare if common prefix (helper for the same flavor)
 		int prefix_score = strcmp(aprefix, bprefix);
@@ -2269,11 +2273,6 @@ compare_order(const void *ap, const void *bp, void *userdata)
 				}
 			}
 		}
-
-		free(aprefix);
-		free(ahelper);
-		free(bprefix);
-		free(bhelper);
 
 		if (prefix_score != 0) {
 			return prefix_score;
@@ -2300,6 +2299,7 @@ compare_order(const void *ap, const void *bp, void *userdata)
 			assert(asuffix);
 			assert(blang);
 			assert(bsuffix);
+			mempool_add_multi(pool, free, alang, asuffix, blang, bsuffix, NULL);
 
 			ssize_t ascore = -1;
 			ssize_t bscore = -1;
@@ -2325,10 +2325,6 @@ compare_order(const void *ap, const void *bp, void *userdata)
 
 			int aold = strcmp(asuffix, "OLD_CMD") == 0;
 			int bold = strcmp(bsuffix, "OLD_CMD") == 0;
-			free(alang);
-			free(asuffix);
-			free(blang);
-			free(bsuffix);
 			if (ascore == bscore) {
 				if (aold && !bold) {
 					return -1;
@@ -2364,6 +2360,7 @@ compare_order(const void *ap, const void *bp, void *userdata)
 			assert(asuffix);
 			assert(bexe);
 			assert(bsuffix);
+			mempool_add_multi(pool, free, aexe, asuffix, bexe, bsuffix, NULL);
 
 			ssize_t ascore = -1;
 			ssize_t bscore = -1;
@@ -2380,10 +2377,6 @@ compare_order(const void *ap, const void *bp, void *userdata)
 
 			int aold = strcmp(asuffix, "DATADIR_VARS") == 0;
 			int bold = strcmp(bsuffix, "DATADIR_VARS") == 0;
-			free(aexe);
-			free(asuffix);
-			free(bexe);
-			free(bsuffix);
 			if (ascore == bscore) {
 				if (aold && !bold) {
 					return -1;
@@ -2415,6 +2408,7 @@ compare_order(const void *ap, const void *bp, void *userdata)
 		}
 		assert(ahelper != NULL && aprefix != NULL);
 		assert(bhelper != NULL && bprefix != NULL);
+		mempool_add_multi(pool, free, aprefix, ahelper, bprefix, bhelper, NULL);
 
 		// Only compare if common prefix (helper for the same option)
 		int prefix_score = strcmp(aprefix, bprefix);
@@ -2431,11 +2425,6 @@ compare_order(const void *ap, const void *bp, void *userdata)
 				}
 			}
 		}
-
-		free(aprefix);
-		free(ahelper);
-		free(bprefix);
-		free(bhelper);
 
 		if (prefix_score != 0) {
 			return prefix_score;
@@ -2481,6 +2470,7 @@ compare_order(const void *ap, const void *bp, void *userdata)
 	if (b_without_subpkg == NULL) {
 		b_without_subpkg = xstrdup(b);
 	}
+	mempool_add_multi(pool, free, a_without_subpkg, asubpkg, b_without_subpkg, bsubpkg, NULL);
 	int ascore = -1;
 	int bscore = -1;
 	for (size_t i = 0; i < nitems(variable_order_) && (ascore == -1 || bscore == -1); i++) {
@@ -2506,10 +2496,6 @@ compare_order(const void *ap, const void *bp, void *userdata)
 	} else {
 		retval = strcmp(a_without_subpkg, b_without_subpkg);
 	}
-	free(a_without_subpkg);
-	free(asubpkg);
-	free(b_without_subpkg);
-	free(bsubpkg);
 
 	return retval;
 }
@@ -2816,28 +2802,6 @@ int
 matches(enum RegularExpression re, const char *s)
 {
 	return regexec(&regular_expressions[re].re, s, 0, NULL, 0) == 0;
-}
-
-char *
-sub(enum RegularExpression re, const char *replacement, const char *s)
-{
-	assert(replacement != NULL);
-	assert(s != NULL);
-
-	size_t len = strlen(replacement) + strlen(s) + 1;
-	char *buf = xmalloc(len);
-	buf[0] = 0;
-
-	regmatch_t pmatch[1];
-	if (regexec(&regular_expressions[re].re, s, 1, pmatch, 0) == 0) {
-		strncpy(buf, s, pmatch[0].rm_so);
-		xstrlcat(buf, replacement, len);
-		strncat(buf, s + pmatch[0].rm_eo, strlen(s) - pmatch[0].rm_eo);
-	} else {
-		xstrlcat(buf, s, len);
-	}
-
-	return buf;
 }
 
 void

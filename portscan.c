@@ -53,6 +53,7 @@
 #include <libias/diff.h>
 #include <libias/map.h>
 #include <libias/set.h>
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "capsicum_helpers.h"

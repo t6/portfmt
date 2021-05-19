@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <libias/str.h>
 #include <libias/util.h>
 
 #include "conditional.h"
