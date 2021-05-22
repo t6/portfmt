@@ -1185,70 +1185,67 @@ static volatile int rules_initialized = 0;
 int
 variable_has_flag(struct Parser *parser, const char *var, int flag)
 {
+	SCOPE_MEMPOOL(pool);
+
 	char *helper;
 	if (is_options_helper(parser, var, NULL, &helper, NULL)) {
+		mempool_add(pool, helper, free);
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if ((variable_order_[i].block == BLOCK_OPTHELPER ||
 			     variable_order_[i].block == BLOCK_OPTDESC) &&
 			    (variable_order_[i].flags & flag) &&
 			    strcmp(helper, variable_order_[i].var) == 0) {
-				free(helper);
 				return 1;
 			}
 		}
-		free(helper);
 	}
 
 	if (is_flavors_helper(parser, var, NULL, &helper)) {
+		mempool_add(pool, helper, free);
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_FLAVORS_HELPER &&
 			    (variable_order_[i].flags & flag) &&
 			    strcmp(helper, variable_order_[i].var) == 0) {
-				free(helper);
 				return 1;
 			}
 		}
-		free(helper);
 	}
 
 	char *suffix;
 	if (is_shebang_lang(parser, var, NULL, &suffix)) {
+		mempool_add(pool, suffix, free);
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_SHEBANGFIX &&
 			    (variable_order_[i].flags & VAR_NOT_COMPARABLE) &&
 			    (variable_order_[i].flags & flag) &&
 			    strcmp(suffix, variable_order_[i].var) == 0) {
-				free(suffix);
 				return 1;
 			}
 		}
-		free(suffix);
 	}
 
 	if (is_cabal_datadir_vars(parser, var, NULL, &suffix)) {
+		mempool_add(pool, suffix, free);
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_CABAL &&
 			    (variable_order_[i].flags & VAR_NOT_COMPARABLE) &&
 			    (variable_order_[i].flags & flag) &&
 			    strcmp(suffix, variable_order_[i].var) == 0) {
-				free(suffix);
 				return 1;
 			}
 		}
-		free(suffix);
 	}
 
 	char *prefix;
 	if (matches_options_group(parser, var, &prefix)) {
+		mempool_add(pool, prefix, free);
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_OPTDEF &&
 			    (variable_order_[i].flags & flag) &&
 			    strcmp(prefix, variable_order_[i].var) == 0) {
-				free(prefix);
 				return 1;
 			}
 		}
-		free(prefix);
 	}
 
 	for (size_t i = 0; i < nitems(variable_order_); i++) {
@@ -1584,18 +1581,18 @@ remove_plist_keyword(const char *s)
 int
 compare_plist_files(struct Parser *parser, struct Variable *var, const char *a, const char *b, int *result)
 {
+	SCOPE_MEMPOOL(pool);
 	assert(result != NULL);
 
 	char *helper = NULL;
 	if (is_options_helper(parser, variable_name(var), NULL, &helper, NULL)) {
+		mempool_add(pool, helper, free);
 		if (strcmp(helper, "PLIST_FILES_OFF") != 0 &&
 		    strcmp(helper, "PLIST_FILES") != 0 &&
 		    strcmp(helper, "PLIST_DIRS_OFF") != 0 &&
 		    strcmp(helper, "PLIST_DIRS") != 0) {
-			free(helper);
 			return 0;
 		}
-		free(helper);
 	} else if (strcmp(variable_name(var), "PLIST_FILES") != 0 &&
 	    strcmp(variable_name(var), "PLIST_DIRS") != 0) {
 		return 0;
@@ -1604,10 +1601,9 @@ compare_plist_files(struct Parser *parser, struct Variable *var, const char *a, 
 	/* Ignore plist keywords */
 	char *as = remove_plist_keyword(a);
 	char *bs = remove_plist_keyword(b);
+	mempool_add(pool, as, free);
+	mempool_add(pool, bs, free);
 	*result = strcasecmp(as, bs);
-	free(as);
-	free(bs);
-
 	return 1;
 }
 
@@ -1666,6 +1662,8 @@ compare_use_qt(struct Variable *var, const char *a, const char *b, int *result)
 int
 is_flavors_helper(struct Parser *parser, const char *var, char **prefix_ret, char **helper_ret)
 {
+	SCOPE_MEMPOOL(pool);
+
 	const char *suffix = NULL;
 	for (size_t i = 0; i < nitems(variable_order_); i++) {
 		if (variable_order_[i].block != BLOCK_FLAVORS_HELPER) {
@@ -1702,7 +1700,7 @@ is_flavors_helper(struct Parser *parser, const char *var, char **prefix_ret, cha
 		goto done;
 	}
 
-	char *prefix = xstrndup(var, len - 1);
+	char *prefix = mempool_add(pool, xstrndup(var, len - 1), free);
 	int found = 0;
 	SET_FOREACH(parser_metadata(parser, PARSER_METADATA_FLAVORS), const char *, flavor) {
 		if (strcmp(prefix, flavor) == 0) {
@@ -1710,7 +1708,6 @@ is_flavors_helper(struct Parser *parser, const char *var, char **prefix_ret, cha
 			break;
 		}
 	}
-	free(prefix);
 	if (!found) {
 		return 0;
 	}
@@ -1784,11 +1781,15 @@ extract_subpkg(struct Parser *parser, const char *var_, char **subpkg_ret)
 int
 is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, char **helper_ret, char **subpkg_ret)
 {
+	SCOPE_MEMPOOL(pool);
+
 	char *subpkg;
 	char *var;
 	if ((var = extract_subpkg(parser, var_, &subpkg)) == NULL) {
 		return 0;
 	}
+	mempool_add(pool, var, free);
+	mempool_add(pool, subpkg, free);
 
 	const char *suffix = NULL;
 	if (str_endswith(var, "DESC")) {
@@ -1808,8 +1809,6 @@ is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, ch
 		}
 	}
 	if (suffix == NULL) {
-		free(subpkg);
-		free(var);
 		return 0;
 	}
 
@@ -1827,8 +1826,6 @@ is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, ch
 		}
 #endif
 		if (!found) {
-			free(subpkg);
-			free(var);
 			return 0;
 		}
 	}
@@ -1837,20 +1834,14 @@ is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, ch
 	// ^[-_[:upper:][:digit:]]+_
 	size_t len = strlen(var) - strlen(suffix);
 	if (len == 0) {
-		free(subpkg);
-		free(var);
 		return 0;
 	}
 	if (var[len - 1] != '_') {
-		free(subpkg);
-		free(var);
 		return 0;
 	}
 	for (size_t i = 0; i < len; i++) {
 		char c = var[i];
 		if (c != '-' && c != '_' && !isupper(c) && !isdigit(c)) {
-			free(subpkg);
-			free(var);
 			return 0;
 		}
 	}
@@ -1859,13 +1850,12 @@ is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, ch
 		goto done;
 	}
 
-	char *prefix = xstrndup(var, len - 1);
+	char *prefix = mempool_add(pool, xstrndup(var, len - 1), free);
 	struct Set *groups = parser_metadata(parser, PARSER_METADATA_OPTION_GROUPS);
 	struct Set *options = parser_metadata(parser, PARSER_METADATA_OPTIONS);
 	if (strcmp(suffix, "DESC") == 0) {
 		SET_FOREACH (groups, const char *, group) {
 			if (strcmp(prefix, group) == 0) {
-				free(prefix);
 				goto done;
 			}
 		}
@@ -1877,10 +1867,7 @@ is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, ch
 			break;
 		}
 	}
-	free(prefix);
 	if (!found) {
-		free(subpkg);
-		free(var);
 		return 0;
 	}
 
@@ -1898,9 +1885,6 @@ done:
 			*subpkg_ret = NULL;
 		}
 	}
-
-	free(subpkg);
-	free(var);
 
 	return 1;
 }
@@ -1968,7 +1952,9 @@ matches_options_group(struct Parser *parser, const char *s, char **prefix)
 static int
 is_cabal_datadir_vars_helper(const char *var, const char *exe, char **prefix, char **suffix)
 {
-	char *buf = str_printf( "%s_DATADIR_VARS", exe);
+	SCOPE_MEMPOOL(pool);
+
+	char *buf = mempool_add(pool, str_printf( "%s_DATADIR_VARS", exe), free);
 	if (strcmp(var, buf) == 0) {
 		if (prefix) {
 			*prefix = xstrdup(exe);
@@ -1976,12 +1962,10 @@ is_cabal_datadir_vars_helper(const char *var, const char *exe, char **prefix, ch
 		if (suffix) {
 			*suffix = xstrdup("DATADIR_VARS");
 		}
-		free(buf);
 		return 1;
+	} else {
+		return 0;
 	}
-	free(buf);
-
-	return 0;
 }
 
 int
@@ -2016,7 +2000,9 @@ is_cabal_datadir_vars(struct Parser *parser, const char *var, char **prefix, cha
 static int
 is_shebang_lang_helper(const char *var, const char *lang, char **prefix, char **suffix)
 {
-	char *buf = str_printf("%s_OLD_CMD", lang);
+	SCOPE_MEMPOOL(pool);
+
+	char *buf = mempool_add(pool, str_printf("%s_OLD_CMD", lang), free);
 	if (strcmp(var, buf) == 0) {
 		if (prefix) {
 			*prefix = xstrdup(lang);
@@ -2024,12 +2010,10 @@ is_shebang_lang_helper(const char *var, const char *lang, char **prefix, char **
 		if (suffix) {
 			*suffix = xstrdup("OLD_CMD");
 		}
-		free(buf);
 		return 1;
 	}
-	free(buf);
 
-	buf = str_printf("%s_CMD", lang);
+	buf = mempool_add(pool, str_printf("%s_CMD", lang), free);
 	if (strcmp(var, buf) == 0) {
 		if (prefix) {
 			*prefix = xstrdup(lang);
@@ -2037,10 +2021,8 @@ is_shebang_lang_helper(const char *var, const char *lang, char **prefix, char **
 		if (suffix) {
 			*suffix = xstrdup("CMD");
 		}
-		free(buf);
 		return 1;
 	}
-	free(buf);
 
 	return 0;
 }
@@ -2095,6 +2077,8 @@ is_shebang_lang(struct Parser *parser, const char *var, char **prefix, char **su
 enum BlockType
 variable_order_block(struct Parser *parser, const char *var, struct Set **uses_candidates)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (uses_candidates) {
 		*uses_candidates = NULL;
 	}
@@ -2143,7 +2127,7 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 	}
 
 	const char *tmp = var;
-	char *var_without_subpkg = extract_subpkg(parser, var, NULL);
+	char *var_without_subpkg = mempool_add(pool, extract_subpkg(parser, var, NULL), free);
 	if (var_without_subpkg) {
 		tmp = var_without_subpkg;
 	}
@@ -2184,7 +2168,6 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 				}
 			}
 			if (satisfies_uses) {
-				free(var_without_subpkg);
 				return variable_order_[i].block;
 			} else if (count > 0 && uses_candidates) {
 				if (*uses_candidates == NULL) {
@@ -2196,7 +2179,6 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 			}
 		}
 	}
-	free(var_without_subpkg);
 
 	return BLOCK_UNKNOWN;
 }
@@ -2256,7 +2238,10 @@ compare_order(const void *ap, const void *bp, void *userdata)
 		}
 		assert(ahelper != NULL && aprefix != NULL);
 		assert(bhelper != NULL && bprefix != NULL);
-		mempool_add_multi(pool, free, aprefix, ahelper, bprefix, bhelper, NULL);
+		mempool_add(pool, aprefix, free);
+		mempool_add(pool, ahelper, free);
+		mempool_add(pool, bprefix, free);
+		mempool_add(pool, bhelper, free);
 
 		// Only compare if common prefix (helper for the same flavor)
 		int prefix_score = strcmp(aprefix, bprefix);
@@ -2299,7 +2284,10 @@ compare_order(const void *ap, const void *bp, void *userdata)
 			assert(asuffix);
 			assert(blang);
 			assert(bsuffix);
-			mempool_add_multi(pool, free, alang, asuffix, blang, bsuffix, NULL);
+			mempool_add(pool, alang, free);
+			mempool_add(pool, asuffix, free);
+			mempool_add(pool, blang, free);
+			mempool_add(pool, bsuffix, free);
 
 			ssize_t ascore = -1;
 			ssize_t bscore = -1;
@@ -2360,7 +2348,10 @@ compare_order(const void *ap, const void *bp, void *userdata)
 			assert(asuffix);
 			assert(bexe);
 			assert(bsuffix);
-			mempool_add_multi(pool, free, aexe, asuffix, bexe, bsuffix, NULL);
+			mempool_add(pool, aexe, free);
+			mempool_add(pool, asuffix, free);
+			mempool_add(pool, bexe, free);
+			mempool_add(pool, bsuffix, free);
 
 			ssize_t ascore = -1;
 			ssize_t bscore = -1;
@@ -2408,7 +2399,10 @@ compare_order(const void *ap, const void *bp, void *userdata)
 		}
 		assert(ahelper != NULL && aprefix != NULL);
 		assert(bhelper != NULL && bprefix != NULL);
-		mempool_add_multi(pool, free, aprefix, ahelper, bprefix, bhelper, NULL);
+		mempool_add(pool, aprefix, free);
+		mempool_add(pool, ahelper, free);
+		mempool_add(pool, bprefix, free);
+		mempool_add(pool, bhelper, free);
 
 		// Only compare if common prefix (helper for the same option)
 		int prefix_score = strcmp(aprefix, bprefix);
@@ -2470,7 +2464,10 @@ compare_order(const void *ap, const void *bp, void *userdata)
 	if (b_without_subpkg == NULL) {
 		b_without_subpkg = xstrdup(b);
 	}
-	mempool_add_multi(pool, free, a_without_subpkg, asubpkg, b_without_subpkg, bsubpkg, NULL);
+	mempool_add(pool, a_without_subpkg, free);
+	mempool_add(pool, asubpkg, free);
+	mempool_add(pool, b_without_subpkg, free);
+	mempool_add(pool, bsubpkg, free);
 	int ascore = -1;
 	int bscore = -1;
 	for (size_t i = 0; i < nitems(variable_order_) && (ascore == -1 || bscore == -1); i++) {
@@ -2482,27 +2479,26 @@ compare_order(const void *ap, const void *bp, void *userdata)
 		}
 	}
 
-	int retval = 0;
 	if (strcmp(a_without_subpkg, b_without_subpkg) == 0 && asubpkg && bsubpkg) {
-		retval = strcmp(asubpkg, bsubpkg);
+		return strcmp(asubpkg, bsubpkg);
 	} else if (asubpkg && !bsubpkg) {
-		retval = 1;
+		return 1;
 	} else if (!asubpkg && bsubpkg) {
-		retval = -1;
+		return -1;
 	} else if (ascore < bscore) {
-		retval = -1;
+		return -1;
 	} else if (ascore > bscore) {
-		retval = 1;
+		return 1;
 	} else {
-		retval = strcmp(a_without_subpkg, b_without_subpkg);
+		return strcmp(a_without_subpkg, b_without_subpkg);
 	}
-
-	return retval;
 }
 
 void
 target_extract_opt(struct Parser *parser, const char *target, char **target_out, char **opt_out, int *state)
 {
+	SCOPE_MEMPOOL(pool);
+
 	int colon = str_endswith(target, ":");
 	int on;
 	if ((colon && ((on = str_endswith(target, "-on:")) || str_endswith(target, "-off:"))) ||
@@ -2518,55 +2514,60 @@ target_extract_opt(struct Parser *parser, const char *target, char **target_out,
 		if (colon) {
 			opt_suffix_len++;
 		}
-		char *opt = xstrndup(p, strlen(p) - opt_suffix_len);
-		char *tmp = str_printf("%s_USES", opt);
+		char *opt = mempool_add(pool, xstrndup(p, strlen(p) - opt_suffix_len), free);
+		char *tmp = mempool_add(pool, str_printf("%s_USES", opt), free);
 		if (is_options_helper(parser, tmp, NULL, NULL, NULL)) {
-			free(tmp);
-			char *target_root = xstrndup(target, strlen(target) - strlen(p) - 1);
+			char *target_root = mempool_add(pool, xstrndup(target, strlen(target) - strlen(p) - 1), free);
 			for (size_t i = 0; i < nitems(target_order_); i++) {
 				if (target_order_[i].opthelper &&
 				    strcmp(target_order_[i].name, target_root) == 0) {
 					*state = on;
-					*opt_out = opt;
-					*target_out = target_root;
+					if (opt_out) {
+						*opt_out = xstrdup(opt);
+					}
+					if (target_out) {
+						*target_out = xstrdup(target_root);
+					}
 					return;
 				}
 			}
-			free(target_root);
-		} else {
-			free(tmp);
 		}
-		free(opt);
 	}
 
-	*opt_out = NULL;
+	if (opt_out) {
+		*opt_out = NULL;
+	}
 	*state = 0;
 	if (colon) {
 		size_t len = strlen(target);
 		if (len > 0) {
-			*target_out = xstrndup(target, len - 1);
+			if (target_out) {
+				*target_out = xstrndup(target, len - 1);
+			}
 			return;
 		}
 	}
-	*target_out = xstrdup(target);
+	if (target_out) {
+		*target_out = xstrdup(target);
+	}
 }
 
 int
 is_known_target(struct Parser *parser, const char *target)
 {
-	char *root, *opt;
+	SCOPE_MEMPOOL(pool);
+
+	char *root;
 	int state;
-	target_extract_opt(parser, target, &root, &opt, &state);
-	free(opt);
+	target_extract_opt(parser, target, &root, NULL, &state);
+	mempool_add(pool, root, free);
 
 	for (size_t i = 0; i < nitems(target_order_); i++) {
 		if (strcmp(target_order_[i].name, root) == 0) {
-			free(root);
 			return 1;
 		}
 	}
 
-	free(root);
 	return 0;
 }
 
@@ -2595,8 +2596,9 @@ is_special_target(const char *target)
 int
 compare_target_order(const void *ap, const void *bp, void *userdata)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct Parser *parser = userdata;
-	int retval = 0;
 	const char *a_ = *(const char **)ap;
 	const char *b_ = *(const char **)bp;
 
@@ -2608,6 +2610,10 @@ compare_target_order(const void *ap, const void *bp, void *userdata)
 	int aoptstate, boptstate;
 	target_extract_opt(parser, a_, &a, &aopt, &aoptstate);
 	target_extract_opt(parser, b_, &b, &bopt, &boptstate);
+	mempool_add(pool, a, free);
+	mempool_add(pool, b, free);
+	mempool_add(pool, aopt, free);
+	mempool_add(pool, bopt, free);
 
 	ssize_t aindex = -1;
 	ssize_t bindex = -1;
@@ -2621,58 +2627,40 @@ compare_target_order(const void *ap, const void *bp, void *userdata)
 	}
 
 	if (aindex == -1) {
-		retval = 1;
-		goto cleanup;
+		return 1;
 	} else if (bindex == -1) {
-		retval = -1;
-		goto cleanup;
+		return -1;
 	} else if (aindex == bindex) {
 		if (aopt == NULL) {
-			retval = -1;
-			goto cleanup;
+			return -1;
 		}
 		if (bopt == NULL) {
-			retval = 1;
-			goto cleanup;
+			return 1;
 		}
 
 		int c = strcmp(aopt, bopt);
 		if (c < 0) {
-			retval = -1;
-			goto cleanup;
+			return -1;
 		} else if (c > 0) {
-			retval = 1;
-			goto cleanup;
+			return 1;
 		}
 
 		if (aoptstate && !boptstate) {
-			retval = -1;
-			goto cleanup;
+			return -1;
 		} else if (!aoptstate && boptstate) {
-			retval = 1;
-			goto cleanup;
+			return 1;
 		} else {
 			// should not happen
 			abort();
 		}
 	} else if (aindex < bindex) {
-		retval = -1;
-		goto cleanup;
+		return -1;
 	} else if (aindex > bindex) {
-		retval = 1;
-		goto cleanup;
+		return 1;
 	} else {
 		// should not happen
 		abort();
 	}
-
-cleanup:
-	free(a);
-	free(aopt);
-	free(b);
-	free(bopt);
-
-	return retval;
 }
 
 const char *
