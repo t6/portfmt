@@ -78,6 +78,7 @@ struct Parser {
 	char *varname;
 
 	struct Set *edited;
+	struct Mempool *pool;
 	struct Mempool *tokengc;
 	struct Array *tokens;
 	struct Array *result;
@@ -106,17 +107,17 @@ static void parser_output_dump_tokens(struct Parser *);
 static void parser_output_prepare(struct Parser *);
 static void parser_output_print_rawlines(struct Parser *, struct Range *);
 static void parser_output_print_target_command(struct Parser *, struct Array *);
-static struct Array *parser_output_sort_opt_use(struct Parser *, struct Array *);
-static struct Array *parser_output_reformatted_helper(struct Parser *, struct Array *);
+static struct Array *parser_output_sort_opt_use(struct Parser *, struct Mempool *, struct Array *);
+static struct Array *parser_output_reformatted_helper(struct Parser *, struct Mempool *, struct Array *);
 static void parser_output_reformatted(struct Parser *);
 static void parser_output_diff(struct Parser *);
 static void parser_propagate_goalcol(struct Parser *, size_t, size_t, int);
 static void parser_read_internal(struct Parser *);
 static void parser_read_line(struct Parser *, char *);
 static void parser_tokenize(struct Parser *, const char *, enum TokenType, size_t);
-static void print_newline_array(struct Parser *, struct Array *);
-static void print_token_array(struct Parser *, struct Array *);
-static char *range_tostring(struct Range *);
+static void print_newline_array(struct Parser *, struct Mempool *, struct Array *);
+static void print_token_array(struct Parser *, struct Mempool *, struct Array *);
+static char *range_tostring(struct Mempool *, struct Range *);
 
 #include "parser/constants.h"
 
@@ -136,12 +137,13 @@ consume_comment(const char *buf)
 size_t
 consume_conditional(const char *buf)
 {
+	SCOPE_MEMPOOL(pool);
+
 	size_t pos = 0;
-	struct Regexp *re = regexp_new(regex(RE_CONDITIONAL));
+	struct Regexp *re = regexp_new(pool, regex(RE_CONDITIONAL));
 	if (regexp_exec(re, buf) == 0) {
 		pos = regexp_length(re, 0);
 	}
-	regexp_free(re);
 
 	if(pos > 0 && (buf[pos - 1] == '(' || buf[pos - 1] == '!')) {
 		pos--;
@@ -216,9 +218,8 @@ consume_token(struct Parser *parser, const char *line, size_t pos,
 		}
 	}
 	if (!eol_ok) {
-		parser->error = PARSER_ERROR_EXPECTED_CHAR;
-		free(parser->error_msg);
-		parser->error_msg = str_printf("%c", endchar);
+		SCOPE_MEMPOOL(pool);
+		parser_set_error(parser, PARSER_ERROR_EXPECTED_CHAR, str_printf(pool, "%c", endchar));
 		return 0;
 	} else {
 		return i;
@@ -279,15 +280,15 @@ is_empty_line(const char *buf)
 }
 
 char *
-range_tostring(struct Range *range)
+range_tostring(struct Mempool *pool, struct Range *range)
 {
 	assert(range);
 	assert(range->start < range->end);
 
 	if (range->start == range->end - 1) {
-		return str_printf("%zu", range->start);
+		return str_printf(pool, "%zu", range->start);
 	} else {
-		return str_printf("%zu-%zu", range->start, range->end - 1);
+		return str_printf(pool, "%zu-%zu", range->start, range->end - 1);
 	}
 }
 
@@ -317,13 +318,14 @@ parser_init_settings(struct ParserSettings *settings)
 }
 
 struct Parser *
-parser_new(struct ParserSettings *settings)
+parser_new(struct Mempool *extpool, struct ParserSettings *settings)
 {
 	rules_init();
 
 	struct Parser *parser = xmalloc(sizeof(struct Parser));
 
 	parser->edited = set_new(NULL, NULL, NULL);
+	parser->pool = mempool_new();
 	parser->tokengc = mempool_new_unique();
 	parser->rawlines = array_new();
 	parser->result = array_new();
@@ -336,9 +338,9 @@ parser_new(struct ParserSettings *settings)
 	parser->inbuf = xmalloc(INBUF_SIZE);
 	parser->settings = *settings;
 	if (settings->filename) {
-		parser->settings.filename = xstrdup(settings->filename);
+		parser->settings.filename = str_dup(NULL, settings->filename);
 	} else {
-		parser->settings.filename = xstrdup("/dev/stdin");
+		parser->settings.filename = str_dup(NULL, "/dev/stdin");
 	}
 
 	if (parser->settings.behavior & PARSER_OUTPUT_EDITED) {
@@ -351,7 +353,7 @@ parser_new(struct ParserSettings *settings)
 		settings->behavior &= ~PARSER_OUTPUT_INPLACE;
 	}
 
-	return parser;
+	return mempool_add(extpool, parser, parser_free);
 }
 
 void
@@ -371,6 +373,7 @@ parser_free(struct Parser *parser)
 	}
 	array_free(parser->rawlines);
 
+	mempool_free(parser->pool);
 	mempool_free(parser->tokengc);
 	set_free(parser->edited);
 	parser_metadata_free(parser);
@@ -385,94 +388,92 @@ parser_free(struct Parser *parser)
 	free(parser);
 }
 
-char *
-parser_error_tostring(struct Parser *parser)
+void
+parser_set_error(struct Parser *parser, enum ParserError error, const char *msg)
 {
-	char *buf;
-	char *lines = range_tostring(&parser->lines);
+	free(parser->error_msg);
+	if (msg) {
+		parser->error_msg = str_dup(NULL, msg);
+	} else {
+		parser->error_msg = NULL;
+	}
+	parser->error = error;
+}
+
+char *
+parser_error_tostring(struct Parser *parser, struct Mempool *extpool)
+{
+	SCOPE_MEMPOOL(pool);
+
+	char *lines = range_tostring(pool, &parser->lines);
 	switch (parser->error) {
 	case PARSER_ERROR_OK:
-		buf = str_printf("line %s: no error", lines);
-		break;
+		return str_printf(extpool, "line %s: no error", lines);
 	case PARSER_ERROR_BUFFER_TOO_SMALL:
 		if (parser->error_msg) {
-			buf = str_printf("line %s: buffer too small: %s", lines, parser->error_msg);
+			return str_printf(extpool, "line %s: buffer too small: %s", lines, parser->error_msg);
 		} else {
-			buf = str_printf("line %s: buffer too small", lines);
+			return str_printf(extpool, "line %s: buffer too small", lines);
 		}
-		break;
 	case PARSER_ERROR_DIFFERENCES_FOUND:
-		buf = str_printf("differences found");
-		break;
+		return str_printf(extpool, "differences found");
 	case PARSER_ERROR_EDIT_FAILED:
 		if (parser->error_msg) {
-			buf = str_printf("%s", parser->error_msg);
+			return str_printf(extpool, "%s", parser->error_msg);
 		} else {
-			buf = str_printf("line %s: edit failed", lines);
+			return str_printf(extpool, "line %s: edit failed", lines);
 		}
-		break;
 	case PARSER_ERROR_EXPECTED_CHAR:
 		if (parser->error_msg) {
-			buf = str_printf("line %s: expected char: %s", lines, parser->error_msg);
+			return str_printf(extpool, "line %s: expected char: %s", lines, parser->error_msg);
 		} else {
-			buf = str_printf("line %s: expected char", lines);
+			return str_printf(extpool, "line %s: expected char", lines);
 		}
-		break;
 	case PARSER_ERROR_EXPECTED_INT:
 		if (parser->error_msg) {
-			buf = str_printf("line %s: expected integer: %s", lines, parser->error_msg);
+			return str_printf(extpool, "line %s: expected integer: %s", lines, parser->error_msg);
 		} else {
-			buf = str_printf("line %s: expected integer", lines);
+			return str_printf(extpool, "line %s: expected integer", lines);
 		}
-		break;
 	case PARSER_ERROR_EXPECTED_TOKEN:
 		if (parser->error_msg) {
-			buf = str_printf("line %s: expected %s", lines, parser->error_msg);
+			return str_printf(extpool, "line %s: expected %s", lines, parser->error_msg);
 		} else {
-			buf = str_printf("line %s: expected token", lines);
+			return str_printf(extpool, "line %s: expected token", lines);
 		}
-		break;
 	case PARSER_ERROR_INVALID_ARGUMENT:
 		if (parser->error_msg) {
-			buf = str_printf("invalid argument: %s", parser->error_msg);
+			return str_printf(extpool, "invalid argument: %s", parser->error_msg);
 		} else {
-			buf = str_printf("invalid argument");
+			return str_printf(extpool, "invalid argument");
 		}
-		break;
 	case PARSER_ERROR_INVALID_REGEXP:
 		if (parser->error_msg) {
-			buf = str_printf("invalid regexp: %s", parser->error_msg);
+			return str_printf(extpool, "invalid regexp: %s", parser->error_msg);
 		} else {
-			buf = str_printf("invalid regexp");
+			return str_printf(extpool, "invalid regexp");
 		}
-		break;
 	case PARSER_ERROR_IO:
 		if (parser->error_msg) {
-			buf = str_printf("line %s: IO error: %s", lines, parser->error_msg);
+			return str_printf(extpool, "line %s: IO error: %s", lines, parser->error_msg);
 		} else {
-			buf = str_printf("line %s: IO error", lines);
+			return str_printf(extpool, "line %s: IO error", lines);
 		}
-		break;
 	case PARSER_ERROR_UNHANDLED_TOKEN_TYPE:
 		if (parser->error_msg) {
-			buf = str_printf("line %s: unhandled token type: %s", lines, parser->error_msg);
+			return str_printf(extpool, "line %s: unhandled token type: %s", lines, parser->error_msg);
 		} else {
-			buf = str_printf("line %s: unhandled token type", lines);
+			return str_printf(extpool, "line %s: unhandled token type", lines);
 		}
-		break;
 	case PARSER_ERROR_UNSPECIFIED:
 		if (parser->error_msg) {
-			buf = str_printf("line %s: parse error: %s", lines, parser->error_msg);
+			return str_printf(extpool, "line %s: parse error: %s", lines, parser->error_msg);
 		} else {
-			buf = str_printf("line %s: parse error", lines);
+			return str_printf(extpool, "line %s: parse error", lines);
 		}
-		break;
 	default:
 		abort();
 	}
-
-	free(lines);
-	return buf;
 }
 
 void
@@ -481,8 +482,7 @@ parser_append_token(struct Parser *parser, enum TokenType type, const char *data
 	struct Token *t = token_new(type, &parser->lines, data, parser->varname,
 				    parser->condname, parser->targetname);
 	if (t == NULL) {
-		parser->error = PARSER_ERROR_EXPECTED_TOKEN;
-		parser->error_msg = xstrdup(token_type_tostring(type));
+		parser_set_error(parser, PARSER_ERROR_EXPECTED_TOKEN, token_type_tostring(type));
 		return;
 	}
 	parser_mark_for_gc(parser, t);
@@ -493,12 +493,14 @@ void
 parser_enqueue_output(struct Parser *parser, const char *s)
 {
 	assert(s != NULL);
-	array_append(parser->result, xstrdup(s));
+	array_append(parser->result, str_dup(NULL, s));
 }
 
 void
 parser_tokenize(struct Parser *parser, const char *line, enum TokenType type, size_t start)
 {
+	SCOPE_MEMPOOL(pool);
+
 	int dollar = 0;
 	int escape = 0;
 	char *token = NULL;
@@ -547,22 +549,17 @@ parser_tokenize(struct Parser *parser, const char *line, enum TokenType type, si
 			} else if (c == '$') {
 				dollar++;
 			} else {
-				parser->error = PARSER_ERROR_EXPECTED_CHAR;
-				free(parser->error_msg);
-				parser->error_msg = xstrdup("$");
+				parser_set_error(parser, PARSER_ERROR_EXPECTED_CHAR, "$");
 			}
 			if (parser->error != PARSER_ERROR_OK) {
 				return;
 			}
 		} else {
 			if (c == ' ' || c == '\t') {
-				char *tmp = str_substr(line, start, i);
-				token = str_trim(tmp);
-				free(tmp);
+				token = str_trim(pool, str_substr(pool, line, start, i));
 				if (strcmp(token, "") != 0 && strcmp(token, "\\") != 0) {
 					parser_append_token(parser, type, token);
 				}
-				free(token);
 				token = NULL;
 				start = i;
 			} else if (c == '"') {
@@ -576,12 +573,8 @@ parser_tokenize(struct Parser *parser, const char *line, enum TokenType type, si
 			} else if (c == '\\') {
 				escape = 1;
 			} else if (c == '#') {
-				char *tmp = str_substr(line, i, strlen(line));
-				token = str_trim(tmp);
-				free(tmp);
+				token = str_trim(pool, str_substr(pool, line, i, strlen(line)));
 				parser_append_token(parser, type, token);
-
-				free(token);
 				token = NULL;
 				parser->error = PARSER_ERROR_OK;
 				return;
@@ -591,16 +584,11 @@ parser_tokenize(struct Parser *parser, const char *line, enum TokenType type, si
 			}
 		}
 	}
-	char *tmp = str_substr(line, start, i);
-	token = str_trim(tmp);
-	free(tmp);
+
+	token = str_trim(pool, str_substr(pool, line, start, i));
 	if (strcmp(token, "") != 0) {
 		parser_append_token(parser, type, token);
 	}
-
-	free(token);
-	token = NULL;
-
 	parser->error = PARSER_ERROR_OK;
 }
 
@@ -677,7 +665,7 @@ parser_find_goalcols(struct Parser *parser)
 }
 
 void
-print_newline_array(struct Parser *parser, struct Array *arr)
+print_newline_array(struct Parser *parser, struct Mempool *pool, struct Array *arr)
 {
 	struct Token *o = array_get(arr, 0);
 	assert(o && token_data(o) != NULL);
@@ -685,17 +673,16 @@ print_newline_array(struct Parser *parser, struct Array *arr)
 	assert(token_type(o) == VARIABLE_TOKEN);
 
 	if (array_len(arr) == 0) {
-		char *var = variable_tostring(token_variable(o));
-		parser_enqueue_output(parser, var);
+		parser_enqueue_output(parser, variable_tostring(token_variable(o), pool));
 		parser_enqueue_output(parser, "\n");
 		parser->error = PARSER_ERROR_OK;
 		return;
 	}
 
-	char *start = variable_tostring(token_variable(o));
+	char *start = variable_tostring(token_variable(o), pool);
 	parser_enqueue_output(parser, start);
 	size_t ntabs = ceil((MAX(16, token_goalcol(o)) - strlen(start)) / 8.0);
-	char *sep = str_repeat("\t", ntabs);
+	char *sep = str_repeat(pool, "\t", ntabs);
 	const char *end = " \\\n";
 	for (size_t i = 0; i < array_len(arr); i++) {
 		struct Token *o = array_get(arr, i);
@@ -711,8 +698,7 @@ print_newline_array(struct Parser *parser, struct Array *arr)
 		parser_enqueue_output(parser, line);
 		// Do not wrap end of line comments
 		if (next && is_comment(next)) {
-			free(sep);
-			sep = xstrdup(" ");
+			sep = str_dup(pool, " ");
 			continue;
 		}
 		parser_enqueue_output(parser, end);
@@ -720,36 +706,31 @@ print_newline_array(struct Parser *parser, struct Array *arr)
 		case VARIABLE_TOKEN:
 			if (i == 0) {
 				size_t ntabs = ceil(MAX(16, token_goalcol(o)) / 8.0);
-				free(sep);
-				sep = str_repeat("\t", ntabs);
+				sep = str_repeat(pool, "\t", ntabs);
 			}
 			break;
 		case CONDITIONAL_TOKEN:
-			free(sep);
-			sep = xstrdup("\t");
+			sep = str_dup(NULL, "\t");
 			break;
 		case TARGET_COMMAND_TOKEN:
-			free(sep);
-			sep = xstrdup("\t\t");
+			sep = str_dup(NULL, "\t\t");
 			break;
 		default:
 			parser->error = PARSER_ERROR_UNHANDLED_TOKEN_TYPE;
-			goto cleanup;
+			return;
 		}
 	}
-cleanup:
-	free(sep);
 }
 
 void
-print_token_array(struct Parser *parser, struct Array *tokens)
+print_token_array(struct Parser *parser, struct Mempool *pool, struct Array *tokens)
 {
 	if (array_len(tokens) < 2) {
-		print_newline_array(parser, tokens);
+		print_newline_array(parser, pool, tokens);
 		return;
 	}
 
-	struct Array *arr = array_new();
+	struct Array *arr = mempool_array(pool);
 	struct Token *o = array_get(tokens, 0);
 	size_t wrapcol;
 	if (token_variable(o) && ignore_wrap_col(parser, token_variable(o))) {
@@ -760,7 +741,7 @@ print_token_array(struct Parser *parser, struct Array *tokens)
 	}
 
 	size_t rowsz = 8192;
-	char *row = xmalloc(rowsz);
+	char *row = mempool_alloc(pool, rowsz);
 	struct Token *token = NULL;
 	ARRAY_FOREACH(tokens, struct Token *, t) {
 		token = t;
@@ -783,16 +764,16 @@ print_token_array(struct Parser *parser, struct Array *tokens)
 		if (strlen(row) == 0) {
 			if ((len = strlcpy(row, token_data(token), rowsz)) >= rowsz) {
 				parser->error = PARSER_ERROR_BUFFER_TOO_SMALL;
-				goto cleanup;
+				return;
 			}
 		} else {
 			if ((len = strlcat(row, " ", rowsz)) >= rowsz) {
 				parser->error = PARSER_ERROR_BUFFER_TOO_SMALL;
-				goto cleanup;
+				return;
 			}
 			if ((len = strlcat(row, token_data(token), rowsz)) >= rowsz) {
 				parser->error = PARSER_ERROR_BUFFER_TOO_SMALL;
-				goto cleanup;
+				return;
 			}
 		}
 	}
@@ -801,11 +782,7 @@ print_token_array(struct Parser *parser, struct Array *tokens)
 		parser_mark_for_gc(parser, t);
 		array_append(arr, t);
 	}
-	print_newline_array(parser, arr);
-
-cleanup:
-	free(row);
-	array_free(arr);
+	print_newline_array(parser, pool, arr);
 }
 
 void
@@ -855,19 +832,19 @@ parser_output_print_target_command(struct Parser *parser, struct Array *tokens)
 		}
 
 		array_append(merge, word);
-		array_append(commands, mempool_add(pool, str_join(merge, " "), free));
+		array_append(commands, str_join(pool, merge, " "));
 		if (wrap_after) {
 			// An empty string is abused as a "wrap line here" marker
-			array_append(commands, mempool_add(pool, xstrdup(""), free));
+			array_append(commands, str_dup(pool, ""));
 			wrap_after = 0;
 		}
 		array_truncate(merge);
 	}
 	if (array_len(merge) > 0) {
-		array_append(commands, mempool_add(pool, str_join(merge, " "), free));
+		array_append(commands, str_join(pool, merge, " "));
 		if (wrap_after) {
 			// An empty string is abused as a "wrap line here" marker
-			array_append(commands, mempool_add(pool, xstrdup(""), free));
+			array_append(commands, str_dup(pool, ""));
 			wrap_after = 0;
 		}
 	}
@@ -1023,7 +1000,7 @@ matches_opt_use_prefix(const char *s)
 }
 
 struct Array *
-parser_output_sort_opt_use(struct Parser *parser, struct Array *arr)
+parser_output_sort_opt_use(struct Parser *parser, struct Mempool *pool, struct Array *arr)
 {
 	if (array_len(arr) == 0) {
 		return arr;
@@ -1033,22 +1010,19 @@ parser_output_sort_opt_use(struct Parser *parser, struct Array *arr)
 	assert(token_type(t) == VARIABLE_TOKEN);
 	int opt_use = 0;
 	char *helper = NULL;
-	if (is_options_helper(parser, variable_name(token_variable(t)), NULL, &helper, NULL)) {
+	if (is_options_helper(pool, parser, variable_name(token_variable(t)), NULL, &helper, NULL)) {
 		if (strcmp(helper, "USE") == 0 || strcmp(helper, "USE_OFF") == 0)  {
 			opt_use = 1;
 		} else if (strcmp(helper, "VARS") == 0 || strcmp(helper, "VARS_OFF") == 0) {
 			opt_use = 0;
 		} else {
-			free(helper);
 			return arr;
 		}
-		free(helper);
 	} else {
 		return arr;
 	}
 
-	SCOPE_MEMPOOL(pool);
-	struct Array *up = array_new();
+	struct Array *up = mempool_array(pool);
 	ARRAY_FOREACH(arr, struct Token *, t) {
 		assert(token_type(t) == VARIABLE_TOKEN);
 		if (!matches_opt_use_prefix(token_data(t))) {
@@ -1062,22 +1036,21 @@ parser_output_sort_opt_use(struct Parser *parser, struct Array *arr)
 		}
 		suffix++;
 
-		char *prefix = mempool_add(pool, str_map(token_data(t), suffix - token_data(t), toupper), free);
+		char *prefix = str_map(pool, token_data(t), suffix - token_data(t), toupper);
 		struct Array *buf = mempool_array(pool);
 		if (opt_use) {
 			struct Array *values = mempool_array(pool);
-			char *var = mempool_add(pool, str_printf("USE_%s", prefix), free);
+			char *var = str_printf(pool, "USE_%s", prefix);
 			array_append(buf, prefix);
 			char *s, *token;
-			s = mempool_add(pool, xstrdup(suffix), free);
+			s = str_dup(pool, suffix);
 			while ((token = strsep(&s, ",")) != NULL) {
-				struct Variable *v = variable_new(var);
+				struct Variable *v = mempool_add(pool, variable_new(var), variable_free);
 				struct Token *t2 = token_new_variable_token(token_lines(t), v, token);
 				if (t2 != NULL) {
 					mempool_add(pool, t2, token_free);
 					array_append(values, t2);
 				}
-				free(v);
 			}
 
 			array_sort(values, compare_tokens, parser);
@@ -1092,16 +1065,15 @@ parser_output_sort_opt_use(struct Parser *parser, struct Array *arr)
 			array_append(buf, suffix);
 		}
 
-		struct Token *t2 = token_clone(t, mempool_add(pool, str_join(buf, ""), free));
+		struct Token *t2 = token_clone(t, str_join(pool, buf, ""));
 		parser_mark_for_gc(parser, t2);
 		array_append(up, t2);
 	}
-	array_free(arr);
 	return up;
 }
 
 struct Array *
-parser_output_reformatted_helper(struct Parser *parser, struct Array *arr /* unowned struct Token */)
+parser_output_reformatted_helper(struct Parser *parser, struct Mempool *pool, struct Array *arr)
 {
 	if (array_len(arr) == 0) {
 		return arr;
@@ -1124,15 +1096,15 @@ parser_output_reformatted_helper(struct Parser *parser, struct Array *arr /* uno
 
 	if (!(parser->settings.behavior & PARSER_UNSORTED_VARIABLES) &&
 	    should_sort(parser, token_variable(t0))) {
-		arr = parser_output_sort_opt_use(parser, arr);
+		arr = parser_output_sort_opt_use(parser, pool, arr);
 		array_sort(arr, compare_tokens, parser);
 	}
 
 	t0 = array_get(arr, 0);
 	if (print_as_newlines(parser, token_variable(t0))) {
-		print_newline_array(parser, arr);
+		print_newline_array(parser, pool, arr);
 	} else {
-		print_token_array(parser, arr);
+		print_token_array(parser, pool, arr);
 	}
 
 cleanup:
@@ -1208,10 +1180,9 @@ parser_output_category_makefile_reformatted(struct Parser *parser)
 			break;
 		} case CONDITIONAL_START:
 			if (conditional_type(token_conditional(t)) != COND_INCLUDE) {
-				parser->error = PARSER_ERROR_UNSPECIFIED;
-				char *buf = conditional_tostring(token_conditional(t));
-				parser->error_msg = str_printf("unsupported conditional in category Makefile: %s", buf);
-				free(buf);
+				parser_set_error(parser, PARSER_ERROR_UNSPECIFIED,
+						 str_printf(pool, "unsupported conditional in category Makefile: %s",
+							conditional_tostring(token_conditional(t), pool)));
 				return;
 			}
 			array_truncate(tokens);
@@ -1246,8 +1217,8 @@ parser_output_category_makefile_reformatted(struct Parser *parser)
 					parser_enqueue_output(parser, "\n");
 				}
 			} else {
-				parser->error = PARSER_ERROR_UNSPECIFIED;
-				parser->error_msg = str_printf("unsupported variable in category Makefile: %s", varname);
+				parser_set_error(parser, PARSER_ERROR_UNSPECIFIED,
+						 str_printf(pool, "unsupported variable in category Makefile: %s", varname));
 				return;
 			}
 			break;
@@ -1259,8 +1230,8 @@ parser_output_category_makefile_reformatted(struct Parser *parser)
 			parser_enqueue_output(parser, "\n");
 			break;
 		default:
-			parser->error = PARSER_ERROR_UNHANDLED_TOKEN_TYPE;
-			parser->error_msg = str_printf("%s", token_type_tostring(token_type(t)));
+			parser_set_error(parser, PARSER_ERROR_UNHANDLED_TOKEN_TYPE,
+					 str_printf(pool, "%s", token_type_tostring(token_type(t))));
 			return;
 		}
 	}
@@ -1269,6 +1240,8 @@ parser_output_category_makefile_reformatted(struct Parser *parser)
 void
 parser_output_reformatted(struct Parser *parser)
 {
+	SCOPE_MEMPOOL(pool);
+
 	parser_find_goalcols(parser);
 	if (parser->error != PARSER_ERROR_OK) {
 		return;
@@ -1279,8 +1252,8 @@ parser_output_reformatted(struct Parser *parser)
 		return;
 	}
 
-	struct Array *target_arr = array_new();
-	struct Array *variable_arr = array_new();
+	struct Array *target_arr = mempool_array(pool);
+	struct Array *variable_arr = mempool_array(pool);
 	struct Token *prev = NULL;
 	ARRAY_FOREACH(parser->tokens, struct Token *, o) {
 		int edited = set_contains(parser->edited, o);
@@ -1305,13 +1278,11 @@ parser_output_reformatted(struct Parser *parser)
 			break;
 		case VARIABLE_END:
 			if (array_len(variable_arr) == 0) {
-				char *var = variable_tostring(token_variable(o));
-				parser_enqueue_output(parser, var);
-				free(var);
+				parser_enqueue_output(parser, variable_tostring(token_variable(o), pool));
 				parser_enqueue_output(parser, "\n");
 				array_truncate(variable_arr);
 			} else {
-				variable_arr = parser_output_reformatted_helper(parser, variable_arr);
+				variable_arr = parser_output_reformatted_helper(parser, pool, variable_arr);
 			}
 			break;
 		case VARIABLE_START:
@@ -1333,7 +1304,7 @@ parser_output_reformatted(struct Parser *parser)
 		case TARGET_END:
 			break;
 		case COMMENT:
-			variable_arr = parser_output_reformatted_helper(parser, variable_arr);
+			variable_arr = parser_output_reformatted_helper(parser, pool, variable_arr);
 			if (edited) {
 				parser_enqueue_output(parser, token_data(o));
 				parser_enqueue_output(parser, "\n");
@@ -1342,7 +1313,7 @@ parser_output_reformatted(struct Parser *parser)
 			}
 			break;
 		case TARGET_START:
-			variable_arr = parser_output_reformatted_helper(parser, variable_arr);
+			variable_arr = parser_output_reformatted_helper(parser, pool, variable_arr);
 			if (edited) {
 				if (prev) {
 					parser_output_edited_insert_empty(parser, prev);
@@ -1355,47 +1326,42 @@ parser_output_reformatted(struct Parser *parser)
 			break;
 		default:
 			parser->error = PARSER_ERROR_UNHANDLED_TOKEN_TYPE;
-			goto cleanup;
+			return;
 		}
 		if (parser->error != PARSER_ERROR_OK) {
-			goto cleanup;
+			return;
 		}
 		prev = o;
 	}
 	if (array_len(target_arr) > 0) {
-		print_token_array(parser, target_arr);
+		print_token_array(parser, pool, target_arr);
 		array_truncate(target_arr);
 	}
-	variable_arr = parser_output_reformatted_helper(parser, variable_arr);
-cleanup:
-	array_free(target_arr);
-	array_free(variable_arr);
+	parser_output_reformatted_helper(parser, pool, variable_arr);
 }
 
 void
 parser_output_diff(struct Parser *parser)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (parser->error != PARSER_ERROR_OK) {
 		return;
 	}
 
 	// Normalize result: one element = one line like parser->rawlines
-	struct Array *lines = array_new();
-	char *lines_buf = str_join(parser->result, "");
+	struct Array *lines = mempool_array(pool);
+	char *lines_buf = str_join(pool, parser->result, "");
 	char *token;
 	while ((token = strsep(&lines_buf, "\n")) != NULL) {
 		array_append(lines, token);
 	}
 	array_pop(lines);
 
-	struct diff p;
-	int rc = array_diff(parser->rawlines, lines, &p, str_compare, NULL);
-	if (rc <= 0) {
-		free(lines_buf);
-		array_free(lines);
-		parser->error = PARSER_ERROR_UNSPECIFIED;
-		free(parser->error_msg);
-		parser->error_msg = str_printf("could not create diff");
+	struct diff *p = array_diff(parser->rawlines, lines, pool, str_compare, NULL);
+	if (p == NULL) {
+		parser_set_error(parser, PARSER_ERROR_UNSPECIFIED,
+				 str_printf(pool, "could not create diff"));
 		return;
 	}
 
@@ -1404,7 +1370,7 @@ parser_output_diff(struct Parser *parser)
 	}
 	array_truncate(parser->result);
 
-	if (p.editdist > 0) {
+	if (p->editdist > 0) {
 		const char *filename = parser->settings.filename;
 		if (filename == NULL) {
 			filename = "Makefile";
@@ -1418,23 +1384,18 @@ parser_output_diff(struct Parser *parser)
 			color_delete = "";
 			color_reset = "";
 		}
-		char *buf = str_printf("%s--- %s\n%s+++ %s%s\n",
-			color_delete, filename, color_add, filename, color_reset);
+		char *buf = str_printf(NULL, "%s--- %s\n%s+++ %s%s\n", color_delete, filename, color_add, filename, color_reset);
 		array_append(parser->result, buf);
-		buf = diff_to_patch(&p, NULL, NULL, parser->settings.diff_context, !nocolor);
-		array_append(parser->result, buf);
+		array_append(parser->result, diff_to_patch(p, NULL, NULL, NULL, parser->settings.diff_context, !nocolor));
 		parser->error = PARSER_ERROR_DIFFERENCES_FOUND;
 	}
-
-	free(lines_buf);
-	array_free(lines);
-	free(p.ses);
-	free(p.lcs);
 }
 
 void
 parser_output_dump_tokens(struct Parser *parser)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (parser->error != PARSER_ERROR_OK) {
 		return;
 	}
@@ -1442,13 +1403,11 @@ parser_output_dump_tokens(struct Parser *parser)
 	size_t maxvarlen = 0;
 	ARRAY_FOREACH(parser->tokens, struct Token *, o) {
 		if (token_type(o) == VARIABLE_START && token_variable(o)) {
-			char *var = variable_tostring(token_variable(o));
-			maxvarlen = MAX(maxvarlen, strlen(var));
-			free(var);
+			maxvarlen = MAX(maxvarlen, strlen(variable_tostring(token_variable(o), pool)));
 		}
 	}
 
-	struct Array *vars = array_new();
+	struct Array *vars = mempool_array(pool);
 	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		const char *type;
 		switch (token_type(t)) {
@@ -1496,18 +1455,18 @@ parser_output_dump_tokens(struct Parser *parser)
 		    (token_type(t) == VARIABLE_TOKEN ||
 		     token_type(t) == VARIABLE_START ||
 		     token_type(t) == VARIABLE_END)) {
-			array_append(vars, variable_tostring(token_variable(t)));
+			array_append(vars, variable_tostring(token_variable(t), pool));
 		} else if (token_conditional(t) &&
 			   (token_type(t) == CONDITIONAL_END ||
 			    token_type(t) == CONDITIONAL_START ||
 			    token_type(t) == CONDITIONAL_TOKEN)) {
-			array_append(vars, conditional_tostring(token_conditional(t)));
+			array_append(vars, conditional_tostring(token_conditional(t), pool));
 		} else if (token_target(t) && token_type(t) == TARGET_START) {
 			ARRAY_FOREACH(target_names(token_target(t)), char *, name) {
-				array_append(vars, xstrdup(name));
+				array_append(vars, str_dup(pool, name));
 			}
 			ARRAY_FOREACH(target_dependencies(token_target(t)), char *, dep) {
-				array_append(vars, str_printf("->%s", dep));
+				array_append(vars, str_printf(pool, "->%s", dep));
 			}
 		} else if (token_target(t) &&
 			   (token_type(t) == TARGET_COMMAND_END ||
@@ -1515,32 +1474,25 @@ parser_output_dump_tokens(struct Parser *parser)
 			    token_type(t) == TARGET_COMMAND_TOKEN ||
 			    token_type(t) == TARGET_START ||
 			    token_type(t) == TARGET_END)) {
-			array_append(vars, xstrdup("-"));
+			array_append(vars, str_dup(pool, "-"));
 		} else {
-			array_append(vars, xstrdup("-"));
+			array_append(vars, str_dup(pool, "-"));
 		}
 
 		ARRAY_FOREACH(vars, char *, var) {
 			ssize_t len = maxvarlen - strlen(var);
-			char *range = range_tostring(token_lines(t));
+			char *range = range_tostring(pool, token_lines(t));
 			char *tokentype;
 			if (array_len(vars) > 1) {
-				tokentype = str_printf("%s#%zu", type, var_index + 1);
+				tokentype = str_printf(pool, "%s#%zu", type, var_index + 1);
 			} else {
-				tokentype = xstrdup(type);
+				tokentype = str_dup(pool, type);
 			}
-			char *buf = str_printf("%-20s %8s ", tokentype, range);
-			free(tokentype);
-			free(range);
-			parser_enqueue_output(parser, buf);
-			free(buf);
-
+			parser_enqueue_output(parser, str_printf(pool, "%-20s %8s ", tokentype, range));
 			parser_enqueue_output(parser, var);
 
 			if (len > 0) {
-				buf = str_repeat(" ", len);
-				parser_enqueue_output(parser, buf);
-				free(buf);
+				parser_enqueue_output(parser, str_repeat(pool, " ", len));
 			}
 			parser_enqueue_output(parser, " ");
 
@@ -1552,8 +1504,6 @@ parser_output_dump_tokens(struct Parser *parser)
 				parser_enqueue_output(parser, "-");
 			}
 			parser_enqueue_output(parser, "\n");
-
-			free(var);
 		}
 		array_truncate(vars);
 	}
@@ -1570,7 +1520,7 @@ parser_read_line(struct Parser *parser, char *line)
 
 	size_t linelen = strlen(line);
 
-	array_append(parser->rawlines, xstrdup(line));
+	array_append(parser->rawlines, str_dup(NULL, line));
 
 	parser->lines.end++;
 
@@ -1646,11 +1596,13 @@ parser_read_from_file(struct Parser *parser, FILE *fp)
 void
 parser_read_internal(struct Parser *parser)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (parser->error != PARSER_ERROR_OK) {
 		return;
 	}
 
-	char *buf = str_trimr(parser->inbuf);
+	char *buf = str_trimr(pool, parser->inbuf);
 	size_t pos;
 
 	pos = consume_comment(buf);
@@ -1666,8 +1618,8 @@ parser_read_internal(struct Parser *parser)
 		pos = consume_conditional(buf);
 		if (pos > 0) {
 			free(parser->condname);
-			char *tmp = xstrndup(buf, pos);
-			parser->condname = str_trimr(tmp);
+			char *tmp = str_ndup(NULL, buf, pos);
+			parser->condname = str_trimr(NULL, tmp);
 			free(tmp);
 
 			parser_append_token(parser, CONDITIONAL_START, parser->condname);
@@ -1693,8 +1645,8 @@ parser_read_internal(struct Parser *parser)
 	pos = consume_conditional(buf);
 	if (pos > 0) {
 		free(parser->condname);
-		char *tmp = xstrndup(buf, pos);
-		parser->condname = str_trimr(tmp);
+		char *tmp = str_ndup(NULL, buf, pos);
+		parser->condname = str_trimr(NULL, tmp);
 		free(tmp);
 
 		parser_append_token(parser, CONDITIONAL_START, parser->condname);
@@ -1708,7 +1660,7 @@ parser_read_internal(struct Parser *parser)
 	if (pos > 0) {
 		parser->in_target = 1;
 		free(parser->targetname);
-		parser->targetname = xstrdup(buf);
+		parser->targetname = str_dup(NULL, buf);
 		parser_append_token(parser, TARGET_START, buf);
 		goto next;
 	}
@@ -1720,8 +1672,8 @@ var:
 			parser->error = PARSER_ERROR_BUFFER_TOO_SMALL;
 			goto next;
 		}
-		char *tmp = xstrndup(buf, pos);
-		parser->varname = str_trim(tmp);
+		char *tmp = str_ndup(NULL, buf, pos);
+		parser->varname = str_trim(NULL, tmp);
 		free(tmp);
 		parser_append_token(parser, VARIABLE_START, NULL);
 	}
@@ -1735,7 +1687,6 @@ next:
 		free(parser->varname);
 		parser->varname = NULL;
 	}
-	free(buf);
 }
 
 enum ParserError
@@ -1768,11 +1719,11 @@ parser_read_finish(struct Parser *parser)
 	parser->read_finished = 1;
 
 	if (parser->settings.behavior & PARSER_SANITIZE_COMMENTS &&
-	    PARSER_ERROR_OK != parser_edit(parser, refactor_sanitize_comments, NULL)) {
+	    PARSER_ERROR_OK != parser_edit(parser, NULL, refactor_sanitize_comments, NULL)) {
 		return parser->error;
 	}
 
-	if (PARSER_ERROR_OK != parser_edit(parser, refactor_sanitize_cmake_args, NULL)) {
+	if (PARSER_ERROR_OK != parser_edit(parser, NULL, refactor_sanitize_cmake_args, NULL)) {
 		return parser->error;
 	}
 
@@ -1781,21 +1732,21 @@ parser_read_finish(struct Parser *parser)
 	// of settings.
 	if ((parser_is_category_makefile(parser) ||
 	     parser->settings.behavior & PARSER_COLLAPSE_ADJACENT_VARIABLES) &&
-	    PARSER_ERROR_OK != parser_edit(parser, refactor_collapse_adjacent_variables, NULL)) {
+	    PARSER_ERROR_OK != parser_edit(parser, NULL, refactor_collapse_adjacent_variables, NULL)) {
 		return parser->error;
 	}
 
 	if (parser->settings.behavior & PARSER_SANITIZE_APPEND &&
-	    PARSER_ERROR_OK != parser_edit(parser, refactor_sanitize_append_modifier, NULL)) {
+	    PARSER_ERROR_OK != parser_edit(parser, NULL, refactor_sanitize_append_modifier, NULL)) {
 		return parser->error;
 	}
 
 	if (parser->settings.behavior & PARSER_DEDUP_TOKENS &&
-	    PARSER_ERROR_OK != parser_edit(parser, refactor_dedup_tokens, NULL)) {
+	    PARSER_ERROR_OK != parser_edit(parser, NULL, refactor_dedup_tokens, NULL)) {
 		return parser->error;
 	}
 
-	if (PARSER_ERROR_OK != parser_edit(parser, refactor_remove_consecutive_empty_lines, NULL)) {
+	if (PARSER_ERROR_OK != parser_edit(parser, NULL, refactor_remove_consecutive_empty_lines, NULL)) {
 		return parser->error;
 	}
 
@@ -1805,6 +1756,8 @@ parser_read_finish(struct Parser *parser)
 enum ParserError
 parser_output_write_to_file(struct Parser *parser, FILE *fp)
 {
+	SCOPE_MEMPOOL(pool);
+
 	parser_output_prepare(parser);
 	if (fp == NULL ||
 	    (parser->error != PARSER_ERROR_OK &&
@@ -1812,36 +1765,27 @@ parser_output_write_to_file(struct Parser *parser, FILE *fp)
 		return parser->error;
 	}
 
-	int error = parser->error;
-
 	int fd = fileno(fp);
 	if (parser->settings.behavior & PARSER_OUTPUT_INPLACE) {
 		if (lseek(fd, 0, SEEK_SET) < 0) {
-			parser->error = PARSER_ERROR_IO;
-			free(parser->error_msg);
-			parser->error_msg = str_printf("lseek: %s", strerror(errno));
+			parser_set_error(parser, PARSER_ERROR_IO,
+					 str_printf(pool, "lseek: %s", strerror(errno)));
 			return parser->error;
 		}
 		if (ftruncate(fd, 0) < 0) {
-			parser->error = PARSER_ERROR_IO;
-			free(parser->error_msg);
-			parser->error_msg = str_printf("ftruncate: %s", strerror(errno));
+			parser_set_error(parser, PARSER_ERROR_IO,
+					 str_printf(pool, "ftruncate: %s", strerror(errno)));
 			return parser->error;
 		}
 	}
 
 	size_t len = array_len(parser->result);
 	if (len == 0) {
-		return error;
+		return parser->error;
 	}
 
 	size_t iov_len = MIN(len, IOV_MAX);
-	struct iovec *iov = recallocarray(NULL, 0, iov_len, sizeof(struct iovec));
-	if (iov == NULL) {
-		warn("recallocarray");
-		abort();
-	}
-
+	struct iovec *iov = mempool_take(pool, xrecallocarray(NULL, 0, iov_len, sizeof(struct iovec)));
 	for (size_t i = 0; i < len;) {
 		size_t j = 0;
 		for (; i < len && j < iov_len; j++) {
@@ -1850,10 +1794,8 @@ parser_output_write_to_file(struct Parser *parser, FILE *fp)
 			iov[j].iov_len = strlen(s);
 		}
 		if (writev(fd, iov, j) < 0) {
-			parser->error = PARSER_ERROR_IO;
-			free(parser->error_msg);
-			parser->error_msg = str_printf("writev: %s", strerror(errno));
-			free(iov);
+			parser_set_error(parser, PARSER_ERROR_IO,
+					 str_printf(pool, "writev: %s", strerror(errno)));
 			return parser->error;
 		}
 	}
@@ -1863,9 +1805,8 @@ parser_output_write_to_file(struct Parser *parser, FILE *fp)
 		free(line);
 	}
 	array_truncate(parser->result);
-	free(iov);
 
-	return error;
+	return parser->error;
 }
 
 enum ParserError
@@ -1876,7 +1817,7 @@ parser_read_from_buffer(struct Parser *parser, const char *input, size_t len)
 	}
 
 	char *buf, *bufp, *line;
-	buf = bufp = xstrndup(input, len);
+	buf = bufp = str_ndup(NULL, input, len);
 	while ((line = strsep(&bufp, "\n")) != NULL) {
 		parser_read_line(parser, line);
 		if (parser->error != PARSER_ERROR_OK) {
@@ -1901,8 +1842,10 @@ parser_mark_edited(struct Parser *parser, struct Token *t)
 }
 
 enum ParserError
-parser_edit(struct Parser *parser, ParserEditFn f, void *userdata)
+parser_edit(struct Parser *parser, struct Mempool *extpool, ParserEditFn f, void *userdata)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (!parser->read_finished) {
 		parser_read_finish(parser);
 	}
@@ -1911,22 +1854,14 @@ parser_edit(struct Parser *parser, ParserEditFn f, void *userdata)
 		return parser->error;
 	}
 
-	enum ParserError error = PARSER_ERROR_OK;
-	char *error_msg = NULL;
-	struct Array *tokens = f(parser, parser->tokens, &error, &error_msg, userdata);
+	struct Array *tokens = f(parser, parser->tokens, extpool, userdata);
 	if (tokens && tokens != parser->tokens) {
 		array_free(parser->tokens);
 		parser->tokens = tokens;
 	}
 
-	if (error != PARSER_ERROR_OK) {
-		parser->error = error;
-		free(parser->error_msg);
-		parser->error_msg = error_msg;
-		error_msg = parser_error_tostring(parser);
-		free(parser->error_msg);
-		parser->error_msg = error_msg;
-		parser->error = PARSER_ERROR_EDIT_FAILED;
+	if (parser->error != PARSER_ERROR_OK) {
+		parser_set_error(parser, PARSER_ERROR_EDIT_FAILED, parser_error_tostring(parser, pool));
 	}
 
 	return parser->error;
@@ -1943,7 +1878,7 @@ parser_meta_values_helper(struct Set *set, const char *var, char *value)
 	if (strcmp(var, "USES") == 0) {
 		char *buf = strchr(value, ':');
 		if (buf != NULL) {
-			char *val = xstrndup(value, buf - value);
+			char *val = str_ndup(NULL, value, buf - value);
 			if (set_contains(set, val)) {
 				free(val);
 			} else {
@@ -1954,91 +1889,78 @@ parser_meta_values_helper(struct Set *set, const char *var, char *value)
 	}
 
 	if (!set_contains(set, value)) {
-		set_add(set, xstrdup(value));
+		set_add(set, str_dup(NULL, value));
 	}
 }
 
 void
 parser_meta_values(struct Parser *parser, const char *var, struct Set *set)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct Array *tmp = NULL;
-	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
+	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, pool, &tmp, NULL)) {
 		ARRAY_FOREACH(tmp, char *, value) {
 			parser_meta_values_helper(set, var, value);
 		}
-		array_free(tmp);
 	}
 
 	struct Set *options = parser_metadata(parser, PARSER_METADATA_OPTIONS);
 	SET_FOREACH(options, const char *, opt) {
-		char *buf = str_printf("%s_VARS", opt);
-		if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
+		char *buf = str_printf(pool, "%s_VARS", opt);
+		if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, pool, &tmp, NULL)) {
 			ARRAY_FOREACH(tmp, char *, value) {
-				char *buf = str_printf("%s+=", var);
+				char *buf = str_printf(pool, "%s+=", var);
 				if (str_startswith(value, buf)) {
 					value += strlen(buf);
 				} else {
-					free(buf);
-					buf = str_printf("%s=", var);
+					buf = str_printf(pool, "%s=", var);
 					if (str_startswith(value, buf)) {
 						value += strlen(buf);
 					} else {
-						free(buf);
 						continue;
 					}
 				}
-				free(buf);
 				parser_meta_values_helper(set, var, value);
 			}
-			array_free(tmp);
 		}
-		free(buf);
 
-		buf = str_printf("%s_VARS_OFF", opt);
-		if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
+		buf = str_printf(pool, "%s_VARS_OFF", opt);
+		if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, pool, &tmp, NULL)) {
 			ARRAY_FOREACH(tmp, char *, value) {
-				char *buf = str_printf("%s+=", var);
+				char *buf = str_printf(pool, "%s+=", var);
 				if (str_startswith(value, buf)) {
 					value += strlen(buf);
 				} else {
-					free(buf);
-					buf = str_printf("%s=", var);
+					buf = str_printf(pool, "%s=", var);
 					if (str_startswith(value, buf)) {
 						value += strlen(buf);
 					} else {
-						free(buf);
 						continue;
 					}
 				}
-				free(buf);
 				parser_meta_values_helper(set, var, value);
 			}
-			array_free(tmp);
 		}
-		free(buf);
 
 #if PORTFMT_SUBPACKAGES
 		if (strcmp(var, "USES") == 0 || strcmp(var, "SUBPACKAGES") == 0) {
 #else
 		if (strcmp(var, "USES") == 0) {
 #endif
-			buf = str_printf("%s_%s", opt, var);
-			if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
+			buf = str_printf(pool, "%s_%s", opt, var);
+			if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, pool, &tmp, NULL)) {
 				ARRAY_FOREACH(tmp, char *, value) {
 					parser_meta_values_helper(set, var, value);
 				}
-				array_free(tmp);
 			}
-			free(buf);
 
-			buf = str_printf("%s_%s_OFF", opt, var);
-			if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, &tmp, NULL)) {
+			buf = str_printf(pool, "%s_%s_OFF", opt, var);
+			if (parser_lookup_variable(parser, buf, PARSER_LOOKUP_DEFAULT, pool, &tmp, NULL)) {
 				ARRAY_FOREACH(tmp, char *, value) {
 					parser_meta_values_helper(set, var, value);
 				}
-				array_free(tmp);
 			}
-			free(buf);
 		}
 	}
 }
@@ -2046,47 +1968,49 @@ parser_meta_values(struct Parser *parser, const char *var, struct Set *set)
 static void
 parser_port_options_add_from_group(struct Parser *parser, const char *groupname)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct Array *optmulti = NULL;
-	if (parser_lookup_variable(parser, groupname, PARSER_LOOKUP_DEFAULT, &optmulti, NULL)) {
+	if (parser_lookup_variable(parser, groupname, PARSER_LOOKUP_DEFAULT, pool, &optmulti, NULL)) {
 		for (size_t i = 0; i < array_len(optmulti); i++) {
 			char *optgroupname = array_get(optmulti, i);
 			if (!set_contains(parser->metadata[PARSER_METADATA_OPTION_GROUPS], optgroupname)) {
-				set_add(parser->metadata[PARSER_METADATA_OPTION_GROUPS], xstrdup(optgroupname));
+				set_add(parser->metadata[PARSER_METADATA_OPTION_GROUPS], str_dup(NULL, optgroupname));
 			}
-			char *optgroupvar = str_printf("%s_%s", groupname, optgroupname);
+			char *optgroupvar = str_printf(pool, "%s_%s", groupname, optgroupname);
 			struct Array *opts = NULL;
-			if (parser_lookup_variable(parser, optgroupvar, PARSER_LOOKUP_DEFAULT, &opts, NULL)) {
+			if (parser_lookup_variable(parser, optgroupvar, PARSER_LOOKUP_DEFAULT, pool, &opts, NULL)) {
 				for (size_t i = 0; i < array_len(opts); i++) {
 					char *opt = array_get(opts, i);
 					if (!set_contains(parser->metadata[PARSER_METADATA_OPTIONS], opt)) {
-						set_add(parser->metadata[PARSER_METADATA_OPTIONS], xstrdup(opt));
+						set_add(parser->metadata[PARSER_METADATA_OPTIONS], str_dup(NULL, opt));
 					}
 				}
-				array_free(opts);
 			}
-			free(optgroupvar);
 		}
-		array_free(optmulti);
 	}
 }
 
 static void
 parser_port_options_add_from_var(struct Parser *parser, const char *var)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct Array *optdefine = NULL;
-	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, &optdefine, NULL)) {
+	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, pool, &optdefine, NULL)) {
 		ARRAY_FOREACH(optdefine, char *, opt) {
 			if (!set_contains(parser->metadata[PARSER_METADATA_OPTIONS], opt)) {
-				set_add(parser->metadata[PARSER_METADATA_OPTIONS], xstrdup(opt));
+				set_add(parser->metadata[PARSER_METADATA_OPTIONS], str_dup(NULL, opt));
 			}
 		}
-		array_free(optdefine);
 	}
 }
 
 void
 parser_metadata_port_options(struct Parser *parser)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (parser->metadata_valid[PARSER_METADATA_OPTIONS]) {
 		return;
 	}
@@ -2097,9 +2021,8 @@ parser_metadata_port_options(struct Parser *parser)
 
 #define FOR_EACH_ARCH(f, var) \
 	for (size_t i = 0; i < nitems(known_architectures_); i++) { \
-		char *buf = str_printf("%s_%s", var, known_architectures_[i]); \
+		char *buf = str_printf(pool, "%s_%s", var, known_architectures_[i]); \
 		f(parser, buf); \
-		free(buf); \
 	}
 
 	parser_port_options_add_from_var(parser, "OPTIONS_DEFINE");
@@ -2121,17 +2044,13 @@ parser_metadata_port_options(struct Parser *parser)
 
 	struct Set *opts[] = { parser->metadata[PARSER_METADATA_OPTIONS], parser->metadata[PARSER_METADATA_OPTION_GROUPS] };
 	for (size_t i = 0; i < nitems(opts); i++) {
-		SET_FOREACH(opts[i], const char *, opt) {
-			char *var = str_printf("%s_DESC", opt);
+		if (opts[i]) SET_FOREACH(opts[i], const char *, opt) {
+			char *var = str_printf(pool, "%s_DESC", opt);
 			if (!map_contains(parser->metadata[PARSER_METADATA_OPTION_DESCRIPTIONS], var)) {
 				char *desc;
-				if (parser_lookup_variable_str(parser, var, PARSER_LOOKUP_FIRST, &desc, NULL)) {
-					map_add(parser->metadata[PARSER_METADATA_OPTION_DESCRIPTIONS], var, desc);
-				} else {
-					free(var);
+				if (parser_lookup_variable_str(parser, var, PARSER_LOOKUP_FIRST, pool, &desc, NULL)) {
+					map_add(parser->metadata[PARSER_METADATA_OPTION_DESCRIPTIONS], str_dup(NULL, var), str_dup(NULL, desc));
 				}
-			} else {
-				free(var);
 			}
 		}
 	}
@@ -2177,6 +2096,8 @@ parser_metadata_free(struct Parser *parser)
 void *
 parser_metadata(struct Parser *parser, enum ParserMetadata meta)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (!parser->metadata_valid[meta]) {
 		switch (meta) {
 		case PARSER_METADATA_CABAL_EXECUTABLES: {
@@ -2185,11 +2106,9 @@ parser_metadata(struct Parser *parser, enum ParserMetadata meta)
 				parser_meta_values(parser, "EXECUTABLES", parser->metadata[PARSER_METADATA_CABAL_EXECUTABLES]);
 				if (set_len(parser->metadata[PARSER_METADATA_CABAL_EXECUTABLES]) == 0) {
 					char *portname;
-					if (parser_lookup_variable_str(parser, "PORTNAME", PARSER_LOOKUP_FIRST, &portname, NULL)) {
-						if (set_contains(parser->metadata[PARSER_METADATA_CABAL_EXECUTABLES], portname)) {
-							free(portname);
-						} else {
-							set_add(parser->metadata[PARSER_METADATA_CABAL_EXECUTABLES], portname);
+					if (parser_lookup_variable_str(parser, "PORTNAME", PARSER_LOOKUP_FIRST, pool, &portname, NULL)) {
+						if (!set_contains(parser->metadata[PARSER_METADATA_CABAL_EXECUTABLES], portname)) {
+							set_add(parser->metadata[PARSER_METADATA_CABAL_EXECUTABLES], str_dup(NULL, portname));
 						}
 					}
 				}
@@ -2202,7 +2121,7 @@ parser_metadata(struct Parser *parser, enum ParserMetadata meta)
 			for (size_t i = 0; i < nitems(static_flavors_); i++) {
 				if (set_contains(uses, (void*)static_flavors_[i].uses) &&
 				    !set_contains(parser->metadata[PARSER_METADATA_FLAVORS], (void*)static_flavors_[i].flavor)) {
-					set_add(parser->metadata[PARSER_METADATA_FLAVORS], xstrdup(static_flavors_[i].flavor));
+					set_add(parser->metadata[PARSER_METADATA_FLAVORS], str_dup(NULL, static_flavors_[i].flavor));
 				}
 			}
 			break;
@@ -2211,9 +2130,9 @@ parser_metadata(struct Parser *parser, enum ParserMetadata meta)
 			break;
 		case PARSER_METADATA_MASTERDIR: {
 			struct Array *tokens = NULL;
-			if (parser_lookup_variable(parser, "MASTERDIR", PARSER_LOOKUP_FIRST, &tokens, NULL)) {
+			if (parser_lookup_variable(parser, "MASTERDIR", PARSER_LOOKUP_FIRST, pool, &tokens, NULL)) {
 				free(parser->metadata[meta]);
-				parser->metadata[meta] = str_join(tokens, " ");
+				parser->metadata[meta] = str_join(NULL, tokens, " ");
 			}
 			break;
 		} case PARSER_METADATA_SHEBANG_LANGS:
@@ -2231,7 +2150,7 @@ parser_metadata(struct Parser *parser, enum ParserMetadata meta)
 		case PARSER_METADATA_SUBPACKAGES:
 			if (!set_contains(parser->metadata[PARSER_METADATA_SUBPACKAGES], "main")) {
 				// There is always a main subpackage
-				set_add(parser->metadata[PARSER_METADATA_SUBPACKAGES], xstrdup("main"));
+				set_add(parser->metadata[PARSER_METADATA_SUBPACKAGES], str_dup(NULL, "main"));
 			}
 			parser_meta_values(parser, "SUBPACKAGES", parser->metadata[PARSER_METADATA_SUBPACKAGES]);
 			break;
@@ -2247,10 +2166,10 @@ parser_metadata(struct Parser *parser, enum ParserMetadata meta)
 }
 
 struct Target *
-parser_lookup_target(struct Parser *parser, const char *name, struct Array **retval)
+parser_lookup_target(struct Parser *parser, const char *name, struct Mempool *pool, struct Array **retval)
 {
 	struct Target *target = NULL;
-	struct Array *tokens = array_new();
+	struct Array *tokens = mempool_array(pool);
 	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		switch (token_type(t)) {
 		case TARGET_START:
@@ -2279,8 +2198,6 @@ parser_lookup_target(struct Parser *parser, const char *name, struct Array **ret
 		}
 	}
 
-	array_free(tokens);
-
 	if (retval) {
 		*retval = NULL;
 	}
@@ -2290,19 +2207,17 @@ parser_lookup_target(struct Parser *parser, const char *name, struct Array **ret
 found:
 	if (retval) {
 		*retval = tokens;
-	} else {
-		array_free(tokens);
 	}
 
 	return target;
 }
 
 struct Variable *
-parser_lookup_variable(struct Parser *parser, const char *name, enum ParserLookupVariableBehavior behavior, struct Array **retval, struct Array **comment)
+parser_lookup_variable(struct Parser *parser, const char *name, enum ParserLookupVariableBehavior behavior, struct Mempool *pool, struct Array **retval, struct Array **comment)
 {
 	struct Variable *var = NULL;
-	struct Array *tokens = array_new();
-	struct Array *comments = array_new();
+	struct Array *tokens = mempool_array(pool);
+	struct Array *comments = mempool_array(pool);
 	int skip = 0;
 	ARRAY_FOREACH(parser->tokens, struct Token *, t) {
 		if ((behavior & PARSER_LOOKUP_IGNORE_VARIABLES_IN_CONDITIIONALS) &&
@@ -2340,10 +2255,6 @@ parser_lookup_variable(struct Parser *parser, const char *name, enum ParserLooku
 	if (var) {
 		goto found;
 	}
-
-	array_free(comments);
-	array_free(tokens);
-
 	if (comment) {
 		*comment = NULL;
 	}
@@ -2356,38 +2267,33 @@ parser_lookup_variable(struct Parser *parser, const char *name, enum ParserLooku
 found:
 	if (comment) {
 		*comment = comments;
-	} else {
-		array_free(comments);
 	}
 	if (retval) {
 		*retval = tokens;
-	} else {
-		array_free(tokens);
 	}
 
 	return var;
 }
 
 struct Variable *
-parser_lookup_variable_str(struct Parser *parser, const char *name, enum ParserLookupVariableBehavior behavior, char **retval, char **comment)
+parser_lookup_variable_str(struct Parser *parser, const char *name, enum ParserLookupVariableBehavior behavior, struct Mempool *extpool, char **retval, char **comment)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct Array *comments;
 	struct Array *tokens;
 	struct Variable *var;
-	if ((var = parser_lookup_variable(parser, name, behavior, &tokens, &comments)) == NULL) {
+	if ((var = parser_lookup_variable(parser, name, behavior, pool, &tokens, &comments)) == NULL) {
 		return NULL;
 	}
 
 	if (comment) {
-		*comment = str_join(comments, " ");
+		*comment = str_join(extpool, comments, " ");
 	}
 
 	if (retval) {
-		*retval = str_join(tokens, " ");
+		*retval = str_join(extpool, tokens, " ");
 	}
-
-	array_free(comments);
-	array_free(tokens);
 
 	return var;
 }
@@ -2399,15 +2305,15 @@ parser_merge(struct Parser *parser, struct Parser *subparser, enum ParserMergeBe
 		settings &= ~PARSER_MERGE_AFTER_LAST_IN_GROUP;
 	}
 	struct ParserEdit params = { subparser, NULL, settings };
-	enum ParserError error = parser_edit(parser, edit_merge, &params);
+	enum ParserError error = parser_edit(parser, NULL, edit_merge, &params);
 
 	if (error == PARSER_ERROR_OK &&
 	    parser->settings.behavior & PARSER_DEDUP_TOKENS) {
-		error = parser_edit(parser, refactor_dedup_tokens, NULL);
+		error = parser_edit(parser, NULL, refactor_dedup_tokens, NULL);
 	}
 
 	if (error == PARSER_ERROR_OK) {
-		error = parser_edit(parser, refactor_remove_consecutive_empty_lines, NULL);
+		error = parser_edit(parser, NULL, refactor_remove_consecutive_empty_lines, NULL);
 	}
 
 	return error;

@@ -49,11 +49,11 @@ enum PortscanLogEntryType {
 #define PORTSCAN_LOG_LATEST "portscan-latest.log"
 #define PORTSCAN_LOG_PREVIOUS "portscan-previous.log"
 
-struct PortscanLogDir *portscan_log_dir_open(const char *, int);
+struct PortscanLogDir *portscan_log_dir_open(struct Mempool *, const char *, int);
 void portscan_log_dir_close(struct PortscanLogDir *);
 
-struct PortscanLog *portscan_log_new(void);
-struct PortscanLog *portscan_log_read_all(struct PortscanLogDir *, const char *);
+struct PortscanLog *portscan_log_new(struct Mempool *);
+struct PortscanLog *portscan_log_read_all(struct Mempool *, struct PortscanLogDir *, const char *);
 void portscan_log_free(struct PortscanLog *);
 
 size_t portscan_log_len(struct PortscanLog *);

@@ -86,7 +86,7 @@ token_new(enum TokenType type, struct Range *lines, const char *data,
 	t->lines = *lines;
 
 	if (data) {
-		t->data = xstrdup(data);
+		t->data = str_dup(NULL, data);
 	}
 	t->cond = cond;
 	t->target = target;
@@ -108,7 +108,7 @@ token_new_comment(struct Range *lines, const char *data, struct Conditional *con
 	if (cond) {
 		t->cond = conditional_clone(cond);
 	}
-	t->data = xstrdup(data);
+	t->data = str_dup(NULL, data);
 	return t;
 }
 
@@ -153,7 +153,7 @@ token_new_variable_token(struct Range *lines, struct Variable *var, const char *
 	t->type = VARIABLE_TOKEN;
 	t->lines = *lines;
 	t->var = variable_clone(var);
-	t->data = xstrdup(data);
+	t->data = str_dup(NULL, data);
 
 	return t;
 }
@@ -184,9 +184,9 @@ token_clone(struct Token *token, const char *newdata)
 
 	t->type = token->type;
 	if (newdata) {
-		t->data = xstrdup(newdata);
+		t->data = str_dup(NULL, newdata);
 	} else if (token->data) {
-		t->data = xstrdup(token->data);
+		t->data = str_dup(NULL, token->data);
 	}
 	if (token->cond) {
 		t->cond = conditional_clone(token->cond);

@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/util.h>
 
 #include "parser.h"
@@ -46,6 +47,8 @@
 static int
 preserve_eol_comment(struct Token *t)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (t == NULL || token_type(t) != VARIABLE_TOKEN) {
 		return 0;
 	}
@@ -55,22 +58,21 @@ preserve_eol_comment(struct Token *t)
 	}
 
 	/* Remove all whitespace from the comment first to cover more cases */
-	char *token = xmalloc(strlen(token_data(t)) + 1);
+	char *token = mempool_alloc(pool, strlen(token_data(t)) + 1);
 	for (char *tokenp = token, *datap = token_data(t); *datap != 0; datap++) {
 		if (!isspace(*datap)) {
 			*tokenp++ = *datap;
 		}
 	}
-	int retval = strcmp(token, "#") == 0 || strcmp(token, "#empty") == 0 ||
-		strcmp(token, "#none") == 0;
-	free(token);
-	return retval;
+	return strcmp(token, "#") == 0 || strcmp(token, "#empty") == 0 || strcmp(token, "#none") == 0;
 }
 
 PARSER_EDIT(refactor_sanitize_eol_comments)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (userdata != NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 
@@ -81,8 +83,8 @@ PARSER_EDIT(refactor_sanitize_eol_comments)
 	 * is just as good.
 	 */
 
-	struct Array *tokens = array_new();
-	struct Array *var_tokens = array_new();
+	struct Array *tokens = mempool_array(pool);
+	struct Array *var_tokens = mempool_array(pool);
 	struct Token *last_token = NULL;
 	ssize_t last_token_index = -1;
 	ssize_t placeholder_index = -1;
@@ -130,8 +132,6 @@ PARSER_EDIT(refactor_sanitize_eol_comments)
 			array_append(ptokens, t);
 		}
 	}
-	array_free(tokens);
-	array_free(var_tokens);
 
 	return ptokens;
 }

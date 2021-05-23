@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/str.h>
 
@@ -44,7 +45,7 @@
 #include "token.h"
 
 static int
-add_target(struct Parser *parser, struct ParserEditOutput *param, struct Set *targets, struct Set *post_plist_targets, char *name, int deps)
+add_target(struct Parser *parser, struct Mempool *extpool, struct ParserEditOutput *param, struct Set *targets, struct Set *post_plist_targets, char *name, int deps)
 {
 	if (deps && is_special_source(name)) {
 		return 0;
@@ -60,7 +61,7 @@ add_target(struct Parser *parser, struct ParserEditOutput *param, struct Set *ta
 		param->found = 1;
 		if (param->callback) {
 			// XXX: provide option as hint for opthelper targets?
-			param->callback(name, name, NULL, param->callbackuserdata);
+			param->callback(extpool, name, name, NULL, param->callbackuserdata);
 		}
 	}
 	return 0;
@@ -68,34 +69,33 @@ add_target(struct Parser *parser, struct ParserEditOutput *param, struct Set *ta
 
 PARSER_EDIT(output_unknown_targets)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct ParserEditOutput *param = userdata;
 	if (param == NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
-		*error_msg = str_printf("missing parameter");
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, "missing parameter");
 		return NULL;
 	}
 
 	param->found = 0;
 	struct Set *post_plist_targets = parser_metadata(parser, PARSER_METADATA_POST_PLIST_TARGETS);
-	struct Set *targets = set_new(str_compare, NULL, NULL);
+	struct Set *targets = mempool_set(pool, str_compare, NULL, NULL);
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
 		if (token_type(t) != TARGET_START) {
 			continue;
 		}
 		int skip_deps = 0;
 		ARRAY_FOREACH(target_names(token_target(t)), char *, name) {
-			if (add_target(parser, param, targets, post_plist_targets, name, 0)) {
+			if (add_target(parser, extpool, param, targets, post_plist_targets, name, 0)) {
 				skip_deps = 1;
 			}
 		}
 		if (!skip_deps) {
 			ARRAY_FOREACH(target_dependencies(token_target(t)), char *, name) {
-				add_target(parser, param, targets, post_plist_targets, name, 1);
+				add_target(parser, extpool, param, targets, post_plist_targets, name, 1);
 			}
 		}
 	}
-
-	set_free(targets);
 
 	return NULL;
 }

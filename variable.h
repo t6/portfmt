@@ -28,6 +28,7 @@
 #pragma once
 
 struct Variable;
+struct Mempool;
 
 enum VariableModifier {
 	MODIFIER_APPEND = 0,
@@ -45,4 +46,4 @@ void variable_free(struct Variable *);
 enum VariableModifier variable_modifier(struct Variable *);
 void variable_set_modifier(struct Variable *, enum VariableModifier);
 char *variable_name(struct Variable *);
-char *variable_tostring(struct Variable *);
+char *variable_tostring(struct Variable *, struct Mempool *);

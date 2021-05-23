@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <libias/mempool.h>
 #include <libias/str.h>
 #include <libias/util.h>
 
@@ -50,6 +51,8 @@ struct Variable {
 struct Variable *
 variable_new(const char *buf)
 {
+	SCOPE_MEMPOOL(pool);
+
 	size_t len = strlen(buf);
 
 	if (len < 2) {
@@ -79,18 +82,14 @@ variable_new(const char *buf)
 		break;
 	}
 
-	char *tmp = xstrndup(buf, strlen(buf) - i);
-	char *name = str_trimr(tmp);
+	char *name = str_trimr(pool, str_ndup(pool, buf, strlen(buf) - i));
 	if (strcmp(name, "") == 0) {
-		free(name);
-		free(tmp);
 		return NULL;
 	}
-	free(tmp);
 
 	struct Variable *var = xmalloc(sizeof(struct Variable));
 	var->modifier = mod;
-	var->name = name;
+	var->name = mempool_forget(pool, name);
 
 	return var;
 }
@@ -99,7 +98,7 @@ struct Variable *
 variable_clone(struct Variable *var)
 {
 	struct Variable *newvar = xmalloc(sizeof(struct Variable));
-	newvar->name = xstrdup(var->name);
+	newvar->name = str_dup(NULL, var->name);
 	newvar->modifier = var->modifier;
 	return newvar;
 }
@@ -152,7 +151,7 @@ variable_name(struct Variable *var)
 }
 
 char *
-variable_tostring(struct Variable *var)
+variable_tostring(struct Variable *var, struct Mempool *pool)
 {
 	assert(var != NULL);
 
@@ -179,5 +178,5 @@ variable_tostring(struct Variable *var)
 	if (str_endswith(var->name, "+")) {
 		sep = " ";
 	}
-	return str_printf("%s%s%s", var->name, sep, mod);
+	return str_printf(pool, "%s%s%s", var->name, sep, mod);
 }

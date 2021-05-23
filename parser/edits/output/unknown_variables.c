@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/str.h>
 #include <libias/util.h>
@@ -54,9 +55,9 @@ static struct UnknownVariable *
 var_new(const char *name, const char *hint)
 {
 	struct UnknownVariable *var = xmalloc(sizeof(struct UnknownVariable));
-	var->name = xstrdup(name);
+	var->name = str_dup(NULL, name);
 	if (hint) {
-		var->hint = xstrdup(hint);
+		var->hint = str_dup(NULL, hint);
 	}
 	return var;
 }
@@ -67,6 +68,7 @@ var_free(struct UnknownVariable *var)
 	if (var) {
 		free(var->name);
 		free(var->hint);
+		free(var);
 	}
 }
 
@@ -90,8 +92,10 @@ var_compare(const void *ap, const void *bp, void *userdata)
 }
 
 static void
-check_opthelper(struct Parser *parser, struct ParserEditOutput *param, struct Set *vars, const char *option, int optuse, int optoff)
+check_opthelper(struct Parser *parser, struct Mempool *extpool, struct ParserEditOutput *param, struct Set *vars, const char *option, int optuse, int optoff)
 {
+	SCOPE_MEMPOOL(pool);
+
 	const char *suffix;
 	if (optoff) {
 		suffix = "_OFF";
@@ -100,13 +104,12 @@ check_opthelper(struct Parser *parser, struct ParserEditOutput *param, struct Se
 	}
 	char *var;
 	if (optuse) {
-		var = str_printf("%s_USE%s", option, suffix);
+		var = str_printf(pool, "%s_USE%s", option, suffix);
 	} else {
-		var = str_printf("%s_VARS%s", option, suffix);
+		var = str_printf(pool, "%s_VARS%s", option, suffix);
 	}
 	struct Array *optvars;
-	if (!parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, &optvars, NULL)) {
-		free(var);
+	if (!parser_lookup_variable(parser, var, PARSER_LOOKUP_DEFAULT, pool, &optvars, NULL)) {
 		return;
 	}
 
@@ -120,11 +123,9 @@ check_opthelper(struct Parser *parser, struct ParserEditOutput *param, struct Se
 		} else if (*(suffix + 1) != '=') {
 			continue;
 		}
-		char *name = str_map(token, suffix - token, toupper);
+		char *name = str_map(pool, token, suffix - token, toupper);
 		if (optuse) {
-			char *tmp = name;
-			name = str_printf("USE_%s", tmp);
-			free(tmp);
+			name = str_printf(pool, "USE_%s", name);
 		}
 		struct UnknownVariable varskey = { .name = name, .hint = var };
 		if (variable_order_block(parser, name, NULL) == BLOCK_UNKNOWN &&
@@ -132,27 +133,25 @@ check_opthelper(struct Parser *parser, struct ParserEditOutput *param, struct Se
 		    (param->keyfilter == NULL || param->keyfilter(parser, name, param->keyuserdata))) {
 			set_add(vars, var_new(name, var));
 			if (param->callback) {
-				param->callback(name, name, var, param->callbackuserdata);
+				param->callback(extpool, name, name, var, param->callbackuserdata);
 			}
 		}
-		free(name);
 	}
-	free(var);
-	array_free(optvars);
 }
 
 PARSER_EDIT(output_unknown_variables)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct ParserEditOutput *param = userdata;
 	if (param == NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
-		*error_msg = str_printf("missing parameter");
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, "missing parameter");
 		return NULL;
 	}
 
 	param->found = 0;
 
-	struct Set *vars = set_new(var_compare, NULL, var_free);
+	struct Set *vars = mempool_set(pool, var_compare, NULL, var_free);
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
 		if (token_type(t) != VARIABLE_START) {
 			continue;
@@ -166,18 +165,17 @@ PARSER_EDIT(output_unknown_variables)
 			set_add(vars, var_new(name, NULL));
 			param->found = 1;
 			if (param->callback) {
-				param->callback(name, name, NULL, param->callbackuserdata);
+				param->callback(extpool, name, name, NULL, param->callbackuserdata);
 			}
 		}
 	}
 	struct Set *options = parser_metadata(parser, PARSER_METADATA_OPTIONS);
 	SET_FOREACH (options, const char *, option) {
-		check_opthelper(parser, param, vars, option, 1, 0);
-		check_opthelper(parser, param, vars, option, 0, 0);
-		check_opthelper(parser, param, vars, option, 1, 1);
-		check_opthelper(parser, param, vars, option, 0, 1);
+		check_opthelper(parser, extpool, param, vars, option, 1, 0);
+		check_opthelper(parser, extpool, param, vars, option, 0, 0);
+		check_opthelper(parser, extpool, param, vars, option, 1, 1);
+		check_opthelper(parser, extpool, param, vars, option, 0, 1);
 	}
-	set_free(vars);
 
 	return NULL;
 }

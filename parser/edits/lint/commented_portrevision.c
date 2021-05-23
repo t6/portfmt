@@ -33,6 +33,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/str.h>
 #include <libias/util.h>
@@ -43,10 +44,13 @@
 
 PARSER_EDIT(lint_commented_portrevision)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct Set **retval = userdata;
 
 	int no_color = parser_settings(parser).behavior & PARSER_OUTPUT_NO_COLOR;
-	struct Set *comments = set_new(str_compare, NULL, free);
+
+	struct Set *comments = mempool_set(pool, str_compare, NULL, free);
 	struct ParserSettings settings;
 
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
@@ -54,43 +58,27 @@ PARSER_EDIT(lint_commented_portrevision)
 			continue;
 		}
 
-		char *comment = str_trim(token_data(t));
+		char *comment = str_trim(pool, token_data(t));
 		if (strlen(comment) <= 1) {
-			free(comment);
 			continue;
 		}
 
 		parser_init_settings(&settings);
-		struct Parser *subparser = parser_new(&settings);
+		struct Parser *subparser = parser_new(pool, &settings);
 		if (parser_read_from_buffer(subparser, comment + 1, strlen(comment) - 1) != PARSER_ERROR_OK) {
-			free(comment);
-			parser_free(subparser);
 			continue;
 		}
 		if (parser_read_finish(subparser) != PARSER_ERROR_OK) {
-			free(comment);
-			parser_free(subparser);
 			continue;
 		}
 
 		struct Array *revtokens = NULL;
-		if (parser_lookup_variable(subparser, "PORTEPOCH", PARSER_LOOKUP_FIRST, &revtokens, NULL) ||
-		    parser_lookup_variable(subparser, "PORTREVISION", PARSER_LOOKUP_FIRST, &revtokens, NULL)) {
-			if (array_len(revtokens) <= 1) {
-				if (set_contains(comments, comment)) {
-					free(comment);
-				} else {
-					set_add(comments, comment);
-				}
-			} else {
-				free(comment);
+		if (parser_lookup_variable(subparser, "PORTEPOCH", PARSER_LOOKUP_FIRST, pool, &revtokens, NULL) ||
+		    parser_lookup_variable(subparser, "PORTREVISION", PARSER_LOOKUP_FIRST, pool, &revtokens, NULL)) {
+			if (array_len(revtokens) <= 1 && !set_contains(comments, comment)) {
+				set_add(comments, str_dup(NULL, comment));
 			}
-			array_free(revtokens);
-		} else {
-			free(comment);
 		}
-
-		parser_free(subparser);
 	}
 
 	if (retval == NULL && set_len(comments) > 0) {
@@ -108,9 +96,7 @@ PARSER_EDIT(lint_commented_portrevision)
 	}
 
 	if (retval) {
-		*retval = comments;
-	} else {
-		set_free(comments);
+		*retval = mempool_forget(pool, comments);
 	}
 
 	return NULL;

@@ -103,28 +103,30 @@ struct ParserSettings {
 };
 
 struct Array;
+struct Mempool;
 struct Parser;
 struct Set;
 struct Token;
 
-typedef struct Array *(*ParserEditFn)(struct Parser *, struct Array *, enum ParserError *, char **, void *);
+typedef struct Array *(*ParserEditFn)(struct Parser *, struct Array *, struct Mempool *, void *);
 
 #define PARSER_EDIT(name) \
-	struct Array *name(struct Parser *parser, struct Array *ptokens, enum ParserError *error, char **error_msg, void *userdata)
+	struct Array *name(struct Parser *parser, struct Array *ptokens, struct Mempool *extpool, void *userdata)
 
-struct Parser *parser_new(struct ParserSettings *);
+struct Parser *parser_new(struct Mempool *, struct ParserSettings *);
 void parser_init_settings(struct ParserSettings *);
 enum ParserError parser_read_from_buffer(struct Parser *, const char *, size_t);
 enum ParserError parser_read_from_file(struct Parser *, FILE *);
 enum ParserError parser_read_finish(struct Parser *);
-char *parser_error_tostring(struct Parser *);
+char *parser_error_tostring(struct Parser *, struct Mempool *);
+void parser_set_error(struct Parser *, enum ParserError, const char *);
 void parser_free(struct Parser *);
 enum ParserError parser_output_write_to_file(struct Parser *, FILE *);
-enum ParserError parser_edit(struct Parser *, ParserEditFn, void *);
+enum ParserError parser_edit(struct Parser *, struct Mempool *, ParserEditFn, void *);
 void parser_enqueue_output(struct Parser *, const char *);
-struct Target *parser_lookup_target(struct Parser *, const char *, struct Array **);
-struct Variable *parser_lookup_variable(struct Parser *, const char *, enum ParserLookupVariableBehavior, struct Array **, struct Array **);
-struct Variable *parser_lookup_variable_str(struct Parser *, const char *, enum ParserLookupVariableBehavior, char **, char **);
+struct Target *parser_lookup_target(struct Parser *, const char *, struct Mempool *, struct Array **);
+struct Variable *parser_lookup_variable(struct Parser *, const char *, enum ParserLookupVariableBehavior, struct Mempool *, struct Array **, struct Array **);
+struct Variable *parser_lookup_variable_str(struct Parser *, const char *, enum ParserLookupVariableBehavior, struct Mempool *, char **, char **);
 void parser_mark_for_gc(struct Parser *, struct Token *);
 void parser_mark_edited(struct Parser *, struct Token *);
 void *parser_metadata(struct Parser *, enum ParserMetadata);

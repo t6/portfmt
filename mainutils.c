@@ -42,6 +42,7 @@
 #include <unistd.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/str.h>
 #include <libias/util.h>
 
@@ -83,7 +84,7 @@ enter_sandbox()
 }
 
 int
-read_common_args(int *argc, char ***argv, struct ParserSettings *settings, const char *optstr, struct Array *expressions)
+read_common_args(int *argc, char ***argv, struct ParserSettings *settings, const char *optstr, struct Mempool *pool, struct Array *expressions)
 {
 	int ch;
 	while ((ch = getopt(*argc, *argv, optstr)) != -1) {
@@ -103,7 +104,7 @@ read_common_args(int *argc, char ***argv, struct ParserSettings *settings, const
 			break;
 		case 'e':
 			if (expressions && optarg) {
-				array_append(expressions, xstrdup(optarg));
+				array_append(expressions, str_dup(pool, optarg));
 			} else {
 				return 0;
 			}
@@ -148,47 +149,43 @@ read_common_args(int *argc, char ***argv, struct ParserSettings *settings, const
 }
 
 static FILE *
-open_file_helper(const char *path, const char *mode, char **retval)
+open_file_helper(struct Mempool *extpool, const char *path, const char *mode, char **retval)
 {
+	SCOPE_MEMPOOL(pool);
+
 	char pwd[PATH_MAX];
 	if (getcwd(pwd, PATH_MAX) == NULL) {
 		*retval = NULL;
 		return NULL;
 	}
 
-	char *filename = str_printf("%s/Makefile", path);
-	FILE *f = fopen(filename, mode);
+	char *filename = str_printf(pool, "%s/Makefile", path);
+	FILE *f = mempool_add(pool, fopen(filename, mode), fclose);
 	if (f == NULL) {
-		free(filename);
-		f = fopen(path, mode);
+		f = mempool_add(pool, fopen(path, mode), fclose);
 		if (f == NULL) {
 			*retval = NULL;
 			return NULL;
 		}
-		filename = xstrdup(path);
+		filename = str_dup(pool, path);
 	}
 
-	char *buf = realpath(filename, NULL);
-	if (buf == NULL) {
-		free(filename);
-		fclose(f);
+	filename = mempool_take(pool, realpath(filename, NULL));
+	if (filename == NULL) {
 		*retval = NULL;
 		return NULL;
 	}
-	filename = buf;
 
 	if (str_startswith(filename, pwd) && filename[strlen(pwd)] == '/') {
-		char *buf = xstrdup(filename + strlen(pwd) + 1);
-		free(filename);
-		filename = buf;
+		filename = str_dup(pool, filename + strlen(pwd) + 1);
 	}
 
-	*retval = filename;
-	return f;
+	*retval = mempool_add(extpool, mempool_forget(pool, filename), free);
+	return mempool_add(extpool, mempool_forget(pool, f), fclose);
 }
 
 int
-open_file(enum MainutilsOpenFileBehavior behavior, int *argc, char ***argv, FILE **fp_in, FILE **fp_out, char **filename)
+open_file(enum MainutilsOpenFileBehavior behavior, int *argc, char ***argv, struct Mempool *pool, FILE **fp_in, FILE **fp_out, char **filename)
 {
 #if HAVE_CAPSICUM
 	closefrom(STDERR_FILENO + 1);
@@ -203,7 +200,7 @@ open_file(enum MainutilsOpenFileBehavior behavior, int *argc, char ***argv, FILE
 			}
 			close(STDOUT_FILENO);
 
-			*fp_in = open_file_helper(*argv[0], "r+", filename);
+			*fp_in = open_file_helper(pool, *argv[0], "r+", filename);
 			*fp_out = *fp_in;
 			if (*fp_in == NULL) {
 				return 0;
@@ -217,7 +214,7 @@ open_file(enum MainutilsOpenFileBehavior behavior, int *argc, char ***argv, FILE
 			if (!(behavior & MAINUTILS_OPEN_FILE_KEEP_STDIN)) {
 				close(STDIN_FILENO);
 			}
-			*fp_in = open_file_helper(*argv[0], "r", filename);
+			*fp_in = open_file_helper(pool, *argv[0], "r", filename);
 			if (*fp_in == NULL) {
 				return 0;
 			}

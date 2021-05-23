@@ -28,6 +28,7 @@
 
 #include "config.h"
 
+#include <ctype.h>
 #include <regex.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -45,16 +46,18 @@
 static int
 is_empty_line(const char *s)
 {
-	char *buf = str_trim(s);
-	int empty = strcmp(buf, "") == 0;
-	free(buf);
-	return empty;
+	for (const char *p = s; *p != 0; p++) {
+		if (!isspace(*p)) {
+			return 0;
+		}
+	}
+	return 1;
 }
 
 PARSER_EDIT(refactor_remove_consecutive_empty_lines)
 {
 	if (userdata != NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 

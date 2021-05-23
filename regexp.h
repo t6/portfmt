@@ -28,12 +28,13 @@
 #pragma once
 
 struct Regexp;
+struct Mempool;
 
-struct Regexp *regexp_new(regex_t *);
-struct Regexp *regexp_new_from_str(const char *, int);
+struct Regexp *regexp_new(struct Mempool *, regex_t *);
+struct Regexp *regexp_new_from_str(struct Mempool *, const char *, int);
 void regexp_free(struct Regexp *);
 size_t regexp_end(struct Regexp *, size_t);
 size_t regexp_length(struct Regexp *, size_t);
 size_t regexp_start(struct Regexp *, size_t);
-char *regexp_substr(struct Regexp *, size_t);
+char *regexp_substr(struct Regexp *, struct Mempool *, size_t);
 int regexp_exec(struct Regexp *, const char *buf);

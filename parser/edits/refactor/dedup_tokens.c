@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/str.h>
 
@@ -52,14 +53,16 @@ enum DedupAction {
 
 PARSER_EDIT(refactor_dedup_tokens)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (userdata != NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 
 	struct Array *tokens = array_new();
-	struct Set *seen = set_new(str_compare, NULL, NULL);
-	struct Set *uses = set_new(str_compare, NULL, free);
+	struct Set *seen = mempool_set(pool, str_compare, NULL, NULL);
+	struct Set *uses = mempool_set(pool, str_compare, NULL, NULL);
 	enum DedupAction action = DEFAULT;
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
 		switch (token_type(t)) {
@@ -73,11 +76,10 @@ PARSER_EDIT(refactor_dedup_tokens)
 				// XXX: Handle *_DEPENDS (turn 'RUN_DEPENDS=foo>=1.5.6:misc/foo foo>0:misc/foo'
 				// into 'RUN_DEPENDS=foo>=1.5.6:misc/foo')?
 				char *helper = NULL;
-				if (is_options_helper(parser, variable_name(token_variable(t)), NULL, &helper, NULL)) {
+				if (is_options_helper(pool, parser, variable_name(token_variable(t)), NULL, &helper, NULL)) {
 					if (strcmp(helper, "USES") == 0 || strcmp(helper, "USES_OFF") == 0) {
 						action = USES;
 					}
-					free(helper);
 				} else if (strcmp(variable_name(token_variable(t)), "USES") == 0) {
 					action = USES;
 				}
@@ -95,7 +97,7 @@ PARSER_EDIT(refactor_dedup_tokens)
 					array_append(tokens, t);
 					set_add(seen, token_data(t));
 				} else if (action == USES) {
-					char *buf = xstrdup(token_data(t));
+					char *buf = str_dup(pool, token_data(t));
 					char *args = strchr(buf, ':');
 					if (args) {
 						*args = 0;
@@ -107,7 +109,6 @@ PARSER_EDIT(refactor_dedup_tokens)
 					// As such compiler:c++14-lang can be dropped entirely.
 					if (set_contains(uses, buf)) {
 						parser_mark_for_gc(parser, t);
-						free(buf);
 					} else {
 						array_append(tokens, t);
 						set_add(uses, buf);
@@ -127,8 +128,6 @@ PARSER_EDIT(refactor_dedup_tokens)
 		}
 	}
 
-	set_free(seen);
-	set_free(uses);
 	return tokens;
 }
 

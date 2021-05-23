@@ -35,6 +35,7 @@
 #include <regex.h>
 #include <stdlib.h>
 
+#include <libias/mempool.h>
 #include <libias/str.h>
 #include <libias/util.h>
 
@@ -62,7 +63,7 @@ regexp_init(struct Regexp *regexp, regex_t *regex)
 }
 
 struct Regexp *
-regexp_new_from_str(const char *pattern, int flags)
+regexp_new_from_str(struct Mempool *pool, const char *pattern, int flags)
 {
 	struct Regexp *regexp = xmalloc(sizeof(struct Regexp));
 	if (regcomp(&regexp->restorage, pattern, flags) != 0) {
@@ -70,16 +71,16 @@ regexp_new_from_str(const char *pattern, int flags)
 		return NULL;
 	}
 	regexp_init(regexp, &regexp->restorage);
-	return regexp;
+	return mempool_add(pool, regexp, regexp_free);
 }
 
 
 struct Regexp *
-regexp_new(regex_t *regex)
+regexp_new(struct Mempool *pool, regex_t *regex)
 {
 	struct Regexp *regexp = xmalloc(sizeof(struct Regexp));
 	regexp_init(regexp, regex);
-	return regexp;
+	return mempool_add(pool, regexp, regexp_free);
 }
 
 void
@@ -130,14 +131,14 @@ regexp_start(struct Regexp *regexp, size_t group)
 }
 
 char *
-regexp_substr(struct Regexp *regexp, size_t group)
+regexp_substr(struct Regexp *regexp, struct Mempool *pool, size_t group)
 {
 	assert(regexp->buf != NULL);
 
 	if (group >= regexp->nmatch) {
 		return NULL;
 	}
-	return str_substr(regexp->buf, regexp_start(regexp, group), regexp_end(regexp, group));
+	return str_substr(pool, regexp->buf, regexp_start(regexp, group), regexp_end(regexp, group));
 }
 
 int

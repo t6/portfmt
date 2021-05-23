@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/str.h>
 
 #include "parser.h"
@@ -44,38 +45,37 @@
 static void
 kak_error(struct Parser *parser, const char *errstr)
 {
-	char *buf = str_printf("echo -markup \"{Error}%s\"\n", errstr);
-	parser_enqueue_output(parser, buf);
-	free(buf);
+	parser_enqueue_output(parser, "echo -markup \"{Error}");
+	parser_enqueue_output(parser, errstr);
+	parser_enqueue_output(parser, "\"\n");
+	parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, errstr);
 }
 
 PARSER_EDIT(kakoune_select_object_on_line)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (!(parser_settings(parser).behavior & PARSER_OUTPUT_RAWLINES)) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
-		*error_msg = str_printf("needs PARSER_OUTPUT_RAWLINES");
-		kak_error(parser, *error_msg);
+		kak_error(parser, "needs PARSER_OUTPUT_RAWLINES");
 		return NULL;
 	}
 
 	char *kak_cursor_line_buf = getenv("kak_cursor_line");
 	if (!kak_cursor_line_buf) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
-		*error_msg = str_printf("could not find kak_cursor_line");
-		kak_error(parser, *error_msg);
+		kak_error(parser, "could not find kak_cursor_line");
 		return NULL;
 	}
 
 	const char *errstr;
 	size_t kak_cursor_line = strtonum(kak_cursor_line_buf, 1, INT_MAX, &errstr);
 	if (kak_cursor_line == 0) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		const char *error_msg;
 		if (errstr) {
-			*error_msg = str_printf("could not parse kak_cursor_line: %s", errstr);
+			error_msg = str_printf(pool, "could not parse kak_cursor_line: %s", errstr);
 		} else {
-			*error_msg = str_printf("could not parse kak_cursor_line");
+			error_msg = "could not parse kak_cursor_line";
 		}
-		kak_error(parser, *error_msg);
+		kak_error(parser, error_msg);
 		return NULL;
 	}
 
@@ -97,9 +97,7 @@ PARSER_EDIT(kakoune_select_object_on_line)
 			break;
 		}
 		if (range && kak_cursor_line >= range->start && kak_cursor_line < range->end) {
-			char *buf = str_printf("select %zu.1,%zu.10000000\n", range->start, range->end - 1);
-			parser_enqueue_output(parser, buf);
-			free(buf);
+			parser_enqueue_output(parser, str_printf(pool, "select %zu.1,%zu.10000000\n", range->start, range->end - 1));
 			found = 1;
 			break;
 		}

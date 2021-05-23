@@ -39,6 +39,8 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include <libias/mempool.h>
+
 #include "mainutils.h"
 #include "parser.h"
 #include "parser/edits.h"
@@ -55,6 +57,8 @@ usage()
 int
 main(int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct ParserSettings settings;
 
 	parser_init_settings(&settings);
@@ -65,7 +69,7 @@ main(int argc, char *argv[])
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	if (!open_file(MAINUTILS_OPEN_FILE_DEFAULT, &argc, &argv, &fp_in, &fp_out, &settings.filename)) {
+	if (!open_file(MAINUTILS_OPEN_FILE_DEFAULT, &argc, &argv, pool, &fp_in, &fp_out, &settings.filename)) {
 		if (fp_in == NULL) {
 			err(1, "open_file");
 		} else {
@@ -77,38 +81,30 @@ main(int argc, char *argv[])
 	}
 	enter_sandbox();
 
-	struct Parser *parser = parser_new(&settings);
-	free(settings.filename);
-	settings.filename = NULL;
+	struct Parser *parser = parser_new(pool, &settings);
 	enum ParserError error = parser_read_from_file(parser, fp_in);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 	error = parser_read_finish(parser);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
-	error = parser_edit(parser, lint_bsd_port, NULL);
+	error = parser_edit(parser, pool, lint_bsd_port, NULL);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	int status = 0;
-	error = parser_edit(parser, lint_order, &status);
+	error = parser_edit(parser, pool, lint_order, &status);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	error = parser_output_write_to_file(parser, fp_out);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;

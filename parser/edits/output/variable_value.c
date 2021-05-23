@@ -45,8 +45,7 @@ PARSER_EDIT(output_variable_value)
 {
 	struct ParserEditOutput *param = userdata;
 	if (param == NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
-		*error_msg = str_printf("missing parameter");
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, "missing parameter");
 		return NULL;
 	}
 
@@ -65,7 +64,7 @@ PARSER_EDIT(output_variable_value)
 			    (param->filter == NULL || param->filter(parser, token_data(t), param->filteruserdata))) {
 				param->found = 1;
 				if (param->callback) {
-					param->callback(variable_name(token_variable(t)), token_data(t), NULL, param->callbackuserdata);
+					param->callback(extpool, variable_name(token_variable(t)), token_data(t), NULL, param->callbackuserdata);
 				}
 			}
 			break;

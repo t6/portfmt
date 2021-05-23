@@ -28,6 +28,7 @@
 #pragma once
 
 struct Array;
+struct Mempool;
 struct Parser;
 enum ParserError;
 enum ParserMergeBehavior;
@@ -43,7 +44,7 @@ struct ParserEditOutput {
 	void *keyuserdata;
 	int (*filter)(struct Parser *, const char *, void *);
 	void *filteruserdata;
-	void (*callback)(const char *, const char *, const char *, void *);
+	void (*callback)(struct Mempool *, const char *, const char *, const char *, void *);
 	void *callbackuserdata;
 	int found;
 };

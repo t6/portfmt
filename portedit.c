@@ -41,6 +41,7 @@
 #include <unistd.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/str.h>
 #include <libias/util.h>
@@ -70,7 +71,7 @@ static void unknown_targets_usage(void);
 static void unknown_vars_usage(void);
 static void usage(void);
 
-static struct Parser *read_file(struct ParserSettings *, enum MainutilsOpenFileBehavior , FILE **, FILE **, int *, char **[]);
+static struct Parser *read_file(struct ParserSettings *, enum MainutilsOpenFileBehavior , struct Mempool *, FILE **, FILE **, int *, char **[]);
 
 struct PorteditCommand {
 	const char *name;
@@ -115,7 +116,7 @@ static struct ParserEdits parser_edits[] = {
 };
 
 static void
-enqueue_output(const char *key, const char *value, const char *hint, void *userdata)
+enqueue_output(struct Mempool *extpool, const char *key, const char *value, const char *hint, void *userdata)
 {
 	struct Parser *parser = userdata;
 	parser_enqueue_output(parser, value);
@@ -125,6 +126,8 @@ enqueue_output(const char *key, const char *value, const char *hint, void *userd
 int
 apply(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	settings->behavior |= PARSER_ALLOW_FUZZY_MATCHING;
 
 	if (argc < 2) {
@@ -168,40 +171,33 @@ apply(struct ParserSettings *settings, int argc, char *argv[])
 		settings->behavior |= PARSER_OUTPUT_RAWLINES;
 	}
 
-	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", NULL)) {
+	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", pool, NULL)) {
 		apply_usage();
 	}
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		apply_usage();
 	}
 
 	void *userdata = NULL;
 	if (str_startswith(apply_edit, "output.")) {
-		userdata = xmalloc(sizeof(struct ParserEditOutput));
+		userdata = mempool_alloc(pool, sizeof(struct ParserEditOutput));
 	}
 
-	int error = parser_edit(parser, editfn, userdata);
+	int error = parser_edit(parser, pool, editfn, userdata);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s: %s", apply_edit, parser_error_tostring(parser));
+		errx(1, "%s: %s", apply_edit, parser_error_tostring(parser, pool));
 	}
-	free(userdata);
 
 	int status = 0;
 	error = parser_output_write_to_file(parser, fp_out);
 	if (error == PARSER_ERROR_DIFFERENCES_FOUND) {
 		status = 2;
 	} else if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;
@@ -210,27 +206,29 @@ apply(struct ParserSettings *settings, int argc, char *argv[])
 int
 bump_epoch(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (argc < 2) {
 		bump_epoch_usage();
 	}
 	argv++;
 	argc--;
 
-	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", NULL)) {
+	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", pool, NULL)) {
 		bump_epoch_usage();
 	}
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		bump_epoch_usage();
 	}
 
 	struct ParserEdit params = { NULL, "PORTEPOCH", PARSER_MERGE_DEFAULT };
-	int error = parser_edit(parser, edit_bump_revision, &params);
+	int error = parser_edit(parser, pool, edit_bump_revision, &params);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	int status = 0;
@@ -238,13 +236,7 @@ bump_epoch(struct ParserSettings *settings, int argc, char *argv[])
 	if (error == PARSER_ERROR_DIFFERENCES_FOUND) {
 		status = 2;
 	} else if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;
@@ -253,27 +245,29 @@ bump_epoch(struct ParserSettings *settings, int argc, char *argv[])
 int
 bump_revision(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (argc < 2) {
 		bump_revision_usage();
 	}
 	argv++;
 	argc--;
 
-	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", NULL)) {
+	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", pool, NULL)) {
 		bump_revision_usage();
 	}
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		bump_revision_usage();
 	}
 
 	struct ParserEdit params = { NULL, NULL, PARSER_MERGE_DEFAULT };
-	int error = parser_edit(parser, edit_bump_revision, &params);
+	int error = parser_edit(parser, pool, edit_bump_revision, &params);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	int status = 0;
@@ -281,13 +275,7 @@ bump_revision(struct ParserSettings *settings, int argc, char *argv[])
 	if (error == PARSER_ERROR_DIFFERENCES_FOUND) {
 		status = 2;
 	} else if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;
@@ -303,6 +291,8 @@ get_variable_filter(struct Parser *parser, const char *key, void *userdata)
 int
 get_variable(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	settings->behavior |= PARSER_OUTPUT_RAWLINES;
 
 	if (argc < 3) { 
@@ -314,31 +304,24 @@ get_variable(struct ParserSettings *settings, int argc, char *argv[])
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		get_variable_usage();
 	}
 
-	struct Regexp *regexp = regexp_new_from_str(var, REG_EXTENDED);
+	struct Regexp *regexp = regexp_new_from_str(pool, var, REG_EXTENDED);
 	if (regexp == NULL) {
 		errx(1, "invalid regexp");
 	}
 	struct ParserEditOutput param = { get_variable_filter, regexp, NULL, NULL, enqueue_output, parser, 0 };
-	int error = parser_edit(parser, output_variable_value, &param);
+	int error = parser_edit(parser, pool, output_variable_value, &param);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
-	regexp_free(regexp);
 
 	error = parser_output_write_to_file(parser, fp_out);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	if (param.found) {
@@ -350,6 +333,8 @@ get_variable(struct ParserSettings *settings, int argc, char *argv[])
 int
 merge(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	settings->behavior |= PARSER_ALLOW_FUZZY_MATCHING;
 
 	if (argc < 2) {
@@ -358,8 +343,8 @@ merge(struct ParserSettings *settings, int argc, char *argv[])
 	argv++;
 	argc--;
 
-	struct Array *expressions = array_new();
-	if (!read_common_args(&argc, &argv, settings, "D::de:iuUw:", expressions)) {
+	struct Array *expressions = mempool_array(pool);
+	if (!read_common_args(&argc, &argv, settings, "D::de:iuUw:", pool, expressions)) {
 		merge_usage();
 	}
 	if (argc == 0 && array_len(expressions) == 0) {
@@ -368,55 +353,45 @@ merge(struct ParserSettings *settings, int argc, char *argv[])
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		merge_usage();
 	}
 
-	struct Parser *subparser = parser_new(settings);
+	struct Parser *subparser = parser_new(pool, settings);
 	int error = PARSER_ERROR_OK;
 	if (array_len(expressions) > 0) {
 		ARRAY_FOREACH(expressions, char *, expr) {
 			error = parser_read_from_buffer(subparser, expr, strlen(expr));
 			if (error != PARSER_ERROR_OK) {
-				errx(1, "%s", parser_error_tostring(subparser));
+				errx(1, "%s", parser_error_tostring(subparser, pool));
 			}
-			free(expr);
 		}
 	} else {
 		error = parser_read_from_file(subparser, stdin);
 		if (error != PARSER_ERROR_OK) {
-			errx(1, "%s", parser_error_tostring(subparser));
+			errx(1, "%s", parser_error_tostring(subparser, pool));
 		}
 	}
-	array_free(expressions);
-	expressions = NULL;
 
 	error = parser_read_finish(subparser);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(subparser));
+		errx(1, "%s", parser_error_tostring(subparser, pool));
 	}
 	error = parser_merge(parser, subparser,
 			     PARSER_MERGE_SHELL_IS_DELETE | PARSER_MERGE_COMMENTS |
 			     PARSER_MERGE_AFTER_LAST_IN_GROUP |
 			     PARSER_MERGE_IGNORE_VARIABLES_IN_CONDITIONALS);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
-	parser_free(subparser);
 
 	int status = 0;
 	error = parser_output_write_to_file(parser, fp_out);
 	if (error == PARSER_ERROR_DIFFERENCES_FOUND) {
 		status = 2;
 	} else if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;
@@ -425,6 +400,8 @@ merge(struct ParserSettings *settings, int argc, char *argv[])
 int
 sanitize_append(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	settings->behavior |= PARSER_SANITIZE_APPEND;
 
 	if (argc < 1) {
@@ -433,20 +410,20 @@ sanitize_append(struct ParserSettings *settings, int argc, char *argv[])
 	argv++;
 	argc--;
 
-	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", NULL)) {
+	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", pool, NULL)) {
 		sanitize_append_usage();
 	}
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		sanitize_append_usage();
 	}
 
-	int error = parser_edit(parser, refactor_sanitize_append_modifier, NULL);
+	int error = parser_edit(parser, pool, refactor_sanitize_append_modifier, NULL);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	int status = 0;
@@ -454,13 +431,7 @@ sanitize_append(struct ParserSettings *settings, int argc, char *argv[])
 	if (error == PARSER_ERROR_DIFFERENCES_FOUND) {
 		status = 2;
 	} else if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;
@@ -469,13 +440,15 @@ sanitize_append(struct ParserSettings *settings, int argc, char *argv[])
 int
 set_version(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (argc < 2) {
 		set_version_usage();
 	}
 	argv++;
 	argc--;
 
-	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", NULL)) {
+	if (!read_common_args(&argc, &argv, settings, "D::diuUw:", pool, NULL)) {
 		set_version_usage();
 	}
 
@@ -488,15 +461,15 @@ set_version(struct ParserSettings *settings, int argc, char *argv[])
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_KEEP_STDIN, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		set_version_usage();
 	}
 
 	struct ParserEdit params = { NULL, version, PARSER_MERGE_DEFAULT };
-	int error = parser_edit(parser, edit_set_version, &params);
+	int error = parser_edit(parser, pool, edit_set_version, &params);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	int status = 0;
@@ -504,13 +477,7 @@ set_version(struct ParserSettings *settings, int argc, char *argv[])
 	if (error == PARSER_ERROR_DIFFERENCES_FOUND) {
 		status = 2;
 	} else if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;
@@ -519,6 +486,8 @@ set_version(struct ParserSettings *settings, int argc, char *argv[])
 int
 unknown_targets(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	settings->behavior |= PARSER_OUTPUT_RAWLINES;
 
 	argv += 2;
@@ -526,26 +495,20 @@ unknown_targets(struct ParserSettings *settings, int argc, char *argv[])
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		unknown_targets_usage();
 	}
 
 	struct ParserEditOutput param = { NULL, NULL, NULL, NULL, enqueue_output, parser, 0 };
-	enum ParserError error = parser_edit(parser, output_unknown_targets, &param);
+	enum ParserError error = parser_edit(parser, pool, output_unknown_targets, &param);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	error = parser_output_write_to_file(parser, fp_out);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	if (param.found) {
@@ -557,6 +520,8 @@ unknown_targets(struct ParserSettings *settings, int argc, char *argv[])
 int
 unknown_vars(struct ParserSettings *settings, int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	settings->behavior |= PARSER_OUTPUT_RAWLINES;
 
 	argv += 2;
@@ -564,26 +529,20 @@ unknown_vars(struct ParserSettings *settings, int argc, char *argv[])
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;
-	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, &fp_in, &fp_out, &argc, &argv);
+	struct Parser *parser = read_file(settings, MAINUTILS_OPEN_FILE_DEFAULT, pool, &fp_in, &fp_out, &argc, &argv);
 	if (parser == NULL) {
 		unknown_vars_usage();
 	}
 
 	struct ParserEditOutput param = { NULL, NULL, NULL, NULL, enqueue_output, parser, 0 };
-	enum ParserError error = parser_edit(parser, output_unknown_variables, &param);
+	enum ParserError error = parser_edit(parser, pool, output_unknown_variables, &param);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	error = parser_output_write_to_file(parser, fp_out);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	if (param.found) {
@@ -674,12 +633,12 @@ usage()
 }
 
 struct Parser *
-read_file(struct ParserSettings *settings, enum MainutilsOpenFileBehavior behavior, FILE **fp_in, FILE **fp_out, int *argc, char **argv[])
+read_file(struct ParserSettings *settings, enum MainutilsOpenFileBehavior behavior, struct Mempool *pool, FILE **fp_in, FILE **fp_out, int *argc, char **argv[])
 {
 	if (settings->behavior & PARSER_OUTPUT_INPLACE) {
 		behavior |= MAINUTILS_OPEN_FILE_INPLACE;
 	}
-	if (!open_file(behavior, argc, argv, fp_in, fp_out, &settings->filename)) {
+	if (!open_file(behavior, argc, argv, pool, fp_in, fp_out, &settings->filename)) {
 		if (*fp_in == NULL) {
 			err(1, "fopen");
 		} else {
@@ -692,16 +651,14 @@ read_file(struct ParserSettings *settings, enum MainutilsOpenFileBehavior behavi
 
 	enter_sandbox();
 
-	struct Parser *parser = parser_new(settings);
-	free(settings->filename);
-	settings->filename = NULL;
+	struct Parser *parser = parser_new(pool, settings);
 	enum ParserError error = parser_read_from_file(parser, *fp_in);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 	error = parser_read_finish(parser);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return parser;

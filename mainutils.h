@@ -28,6 +28,7 @@
 #pragma once
 
 struct Array;
+struct Mempool;
 struct ParserSettings;
 
 enum MainutilsOpenFileBehavior {
@@ -38,5 +39,5 @@ enum MainutilsOpenFileBehavior {
 
 int can_use_colors(FILE *);
 void enter_sandbox(void);
-int open_file(enum MainutilsOpenFileBehavior, int *, char ***, FILE **, FILE **, char **filename);
-int read_common_args(int *, char ***, struct ParserSettings *, const char *, struct Array *);
+int open_file(enum MainutilsOpenFileBehavior, int *, char ***, struct Mempool *, FILE **, FILE **, char **filename);
+int read_common_args(int *, char ***, struct ParserSettings *, const char *, struct Mempool *, struct Array *);

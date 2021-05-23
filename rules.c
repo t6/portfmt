@@ -61,15 +61,15 @@ static int compare_use_gnome(struct Variable *, const char *, const char *, int 
 static int compare_use_kde(struct Variable *, const char *, const char *, int *);
 static int compare_use_pyqt(struct Variable *, const char *, const char *, int *);
 static int compare_use_qt(struct Variable *, const char *, const char *, int *);
-static char *extract_subpkg(struct Parser *, const char *, char **);
-static int is_cabal_datadir_vars(struct Parser *, const char *, char **, char **);
-static int is_flavors_helper(struct Parser *, const char *, char **, char **);
-static int is_shebang_lang(struct Parser *, const char *, char **, char **);
+static char *extract_subpkg(struct Mempool *, struct Parser *, const char *, char **);
+static int is_cabal_datadir_vars(struct Mempool *, struct Parser *, const char *, char **, char **);
+static int is_flavors_helper(struct Mempool *, struct Parser *, const char *, char **, char **);
+static int is_shebang_lang(struct Mempool *, struct Parser *, const char *, char **, char **);
 static int is_valid_license(struct Parser *, const char *);
 static int matches_license_name(struct Parser *, const char *);
-static int matches_options_group(struct Parser *, const char *, char **);
-static char *remove_plist_keyword(const char *);
-static void target_extract_opt(struct Parser *, const char *, char **, char **, int *);
+static int matches_options_group(struct Mempool *, struct Parser *, const char *, char **);
+static char *remove_plist_keyword(const char *, struct Mempool *);
+static void target_extract_opt(struct Mempool *, struct Parser *, const char *, char **, char **, int *);
 static int variable_has_flag(struct Parser *, const char *, int);
 
 static struct {
@@ -1194,8 +1194,7 @@ variable_has_flag(struct Parser *parser, const char *var, int flag)
 	SCOPE_MEMPOOL(pool);
 
 	char *helper;
-	if (is_options_helper(parser, var, NULL, &helper, NULL)) {
-		mempool_add(pool, helper, free);
+	if (is_options_helper(pool, parser, var, NULL, &helper, NULL)) {
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if ((variable_order_[i].block == BLOCK_OPTHELPER ||
 			     variable_order_[i].block == BLOCK_OPTDESC) &&
@@ -1206,8 +1205,7 @@ variable_has_flag(struct Parser *parser, const char *var, int flag)
 		}
 	}
 
-	if (is_flavors_helper(parser, var, NULL, &helper)) {
-		mempool_add(pool, helper, free);
+	if (is_flavors_helper(pool, parser, var, NULL, &helper)) {
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_FLAVORS_HELPER &&
 			    (variable_order_[i].flags & flag) &&
@@ -1218,8 +1216,7 @@ variable_has_flag(struct Parser *parser, const char *var, int flag)
 	}
 
 	char *suffix;
-	if (is_shebang_lang(parser, var, NULL, &suffix)) {
-		mempool_add(pool, suffix, free);
+	if (is_shebang_lang(pool, parser, var, NULL, &suffix)) {
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_SHEBANGFIX &&
 			    (variable_order_[i].flags & VAR_NOT_COMPARABLE) &&
@@ -1230,8 +1227,7 @@ variable_has_flag(struct Parser *parser, const char *var, int flag)
 		}
 	}
 
-	if (is_cabal_datadir_vars(parser, var, NULL, &suffix)) {
-		mempool_add(pool, suffix, free);
+	if (is_cabal_datadir_vars(pool, parser, var, NULL, &suffix)) {
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_CABAL &&
 			    (variable_order_[i].flags & VAR_NOT_COMPARABLE) &&
@@ -1243,8 +1239,7 @@ variable_has_flag(struct Parser *parser, const char *var, int flag)
 	}
 
 	char *prefix;
-	if (matches_options_group(parser, var, &prefix)) {
-		mempool_add(pool, prefix, free);
+	if (matches_options_group(pool, parser, var, &prefix)) {
 		for (size_t i = 0; i < nitems(variable_order_); i++) {
 			if (variable_order_[i].block == BLOCK_OPTDEF &&
 			    (variable_order_[i].flags & flag) &&
@@ -1273,23 +1268,22 @@ variable_has_flag(struct Parser *parser, const char *var, int flag)
 }
 
 static int
-extract_arch_prefix(const char *var, char **prefix_without_arch, char **prefix_without_arch_osrel)
+extract_arch_prefix(struct Mempool *pool, const char *var, char **prefix_without_arch, char **prefix_without_arch_osrel)
 {
-	SCOPE_MEMPOOL(pool);
 	for (size_t i = 0; i < nitems(known_architectures_); i++) {
-		char *suffix = mempool_add(pool, str_printf("_%s", known_architectures_[i]), free);
+		char *suffix = str_printf(pool, "_%s", known_architectures_[i]);
 		if (str_endswith(var, suffix)) {
-			*prefix_without_arch = xstrndup(var, strlen(var) - strlen(suffix));
+			*prefix_without_arch = str_ndup(pool, var, strlen(var) - strlen(suffix));
 			*prefix_without_arch_osrel = NULL;
 			return 1;
 		}
 	}
 	for (size_t i = 0; i < nitems(known_architectures_); i++) {
 		for (size_t j = 0; j < nitems(freebsd_versions_); j++) {
-			char *suffix = mempool_add(pool, str_printf("_%s_%d", known_architectures_[i], freebsd_versions_[j]), free);
+			char *suffix = str_printf(pool, "_%s_%d", known_architectures_[i], freebsd_versions_[j]);
 			if (str_endswith(var, suffix)) {
-				*prefix_without_arch = xstrndup(var, strlen(var) - strlen(suffix));
-				*prefix_without_arch_osrel = xstrndup(var, strlen(var) - strlen(suffix) + strlen(known_architectures_[i]) + 1);
+				*prefix_without_arch = str_ndup(pool, var, strlen(var) - strlen(suffix));
+				*prefix_without_arch_osrel = str_ndup(pool, var, strlen(var) - strlen(suffix) + strlen(known_architectures_[i]) + 1);
 				return 1;
 			}
 		}
@@ -1301,9 +1295,8 @@ static int
 is_declarative_var_lookup(struct Mempool *pool, struct Parser *parser, const char *var, struct Array **tokens)
 {
 	*tokens = NULL;
-	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_FIRST, tokens, NULL) ||
-	    (*var == '_' && parser_lookup_variable(parser, var + 1, PARSER_LOOKUP_FIRST, tokens, NULL))) {
-		mempool_add(pool, *tokens, array_free);
+	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_FIRST, pool, tokens, NULL) ||
+	    (*var == '_' && parser_lookup_variable(parser, var + 1, PARSER_LOOKUP_FIRST, pool, tokens, NULL))) {
 		return 1;
 	} else {
 		return 0;
@@ -1317,17 +1310,15 @@ is_declarative_var(struct Parser *parser, const char *var)
 
 	char *prefix = NULL;
 	char *prefix_without_osrel = NULL;
-	if (extract_arch_prefix(var, &prefix, &prefix_without_osrel)) {
-		mempool_take(pool, prefix);
-		mempool_take(pool, prefix_without_osrel);
+	if (extract_arch_prefix(pool, var, &prefix, &prefix_without_osrel)) {
 		struct Array *tokens = NULL;
 		if (is_declarative_var_lookup(pool, parser, prefix, &tokens)) {
-			if (array_find(tokens, mempool_add(pool, str_printf("${%s_${ARCH}}", prefix), free), str_compare, NULL) != -1) {
+			if (array_find(tokens, str_printf(pool, "${%s_${ARCH}}", prefix), str_compare, NULL) != -1) {
 				return 1;
 			}
 		}
 		if (prefix_without_osrel && is_declarative_var_lookup(pool, parser, prefix_without_osrel, &tokens)) {
-			if (array_find(tokens, mempool_add(pool, str_printf("${%s_${ARCH}_${OSREL:R}}", prefix), free), str_compare, NULL) != -1) {
+			if (array_find(tokens, str_printf(pool, "${%s_${ARCH}_${OSREL:R}}", prefix), str_compare, NULL) != -1) {
 				return 1;
 			}
 		}
@@ -1336,8 +1327,7 @@ is_declarative_var(struct Parser *parser, const char *var)
 		struct Array *tokens = NULL;
 		struct Set *flavors = parser_metadata(parser, PARSER_METADATA_FLAVORS);
 		if (set_contains(flavors, flavor) &&
-		    parser_lookup_variable(parser, "COMMENT", PARSER_LOOKUP_DEFAULT, &tokens, NULL) &&
-		    mempool_add(pool, tokens, array_free) &&
+		    parser_lookup_variable(parser, "COMMENT", PARSER_LOOKUP_DEFAULT, pool, &tokens, NULL) &&
 		    array_find(tokens, "${COMMENT_${FLAVOR}}", str_compare, NULL) != -1) {
 			return 1;
 		}
@@ -1631,31 +1621,31 @@ compare_license_perms(struct Parser *parser, struct Variable *var, const char *a
 }
 
 char *
-remove_plist_keyword(const char *s)
+remove_plist_keyword(const char *s, struct Mempool *pool)
 {
 	if (!str_endswith(s, "\"")) {
-		return xstrdup(s);
+		return str_dup(pool, s);
 	}
 
 	// "^\"@([a-z]|-)+ "
 	const char *ptr = s;
 	if (*ptr != '"') {
-		return xstrdup(s);
+		return str_dup(pool, s);
 	}
 	ptr++;
 	if (*ptr != '@') {
-		return xstrdup(s);
+		return str_dup(pool, s);
 	}
 	ptr++;
 
 	const char *prev = ptr;
 	for (; *ptr != 0 && (islower(*ptr) || *ptr == '-'); ptr++);
 	if (*ptr == 0 || prev == ptr || *ptr != ' ') {
-		return xstrdup(s);
+		return str_dup(pool, s);
 	}
 	ptr++;
 
-	return xstrndup(ptr, strlen(ptr) - 1);
+	return str_ndup(pool, ptr, strlen(ptr) - 1);
 }
 
 int
@@ -1665,8 +1655,7 @@ compare_plist_files(struct Parser *parser, struct Variable *var, const char *a, 
 	assert(result != NULL);
 
 	char *helper = NULL;
-	if (is_options_helper(parser, variable_name(var), NULL, &helper, NULL)) {
-		mempool_add(pool, helper, free);
+	if (is_options_helper(pool, parser, variable_name(var), NULL, &helper, NULL)) {
 		if (strcmp(helper, "PLIST_FILES_OFF") != 0 &&
 		    strcmp(helper, "PLIST_FILES") != 0 &&
 		    strcmp(helper, "PLIST_DIRS_OFF") != 0 &&
@@ -1679,10 +1668,8 @@ compare_plist_files(struct Parser *parser, struct Variable *var, const char *a, 
 	}
 
 	/* Ignore plist keywords */
-	char *as = remove_plist_keyword(a);
-	char *bs = remove_plist_keyword(b);
-	mempool_add(pool, as, free);
-	mempool_add(pool, bs, free);
+	char *as = remove_plist_keyword(a, pool);
+	char *bs = remove_plist_keyword(b, pool);
 	*result = strcasecmp(as, bs);
 	return 1;
 }
@@ -1740,10 +1727,8 @@ compare_use_qt(struct Variable *var, const char *a, const char *b, int *result)
 }
 
 int
-is_flavors_helper(struct Parser *parser, const char *var, char **prefix_ret, char **helper_ret)
+is_flavors_helper(struct Mempool *pool, struct Parser *parser, const char *var, char **prefix_ret, char **helper_ret)
 {
-	SCOPE_MEMPOOL(pool);
-
 	const char *suffix = NULL;
 	for (size_t i = 0; i < nitems(variable_order_); i++) {
 		if (variable_order_[i].block != BLOCK_FLAVORS_HELPER) {
@@ -1780,7 +1765,7 @@ is_flavors_helper(struct Parser *parser, const char *var, char **prefix_ret, cha
 		goto done;
 	}
 
-	char *prefix = mempool_add(pool, xstrndup(var, len - 1), free);
+	char *prefix = str_ndup(pool, var, len - 1);
 	int found = 0;
 	SET_FOREACH(parser_metadata(parser, PARSER_METADATA_FLAVORS), const char *, flavor) {
 		if (strcmp(prefix, flavor) == 0) {
@@ -1793,17 +1778,17 @@ is_flavors_helper(struct Parser *parser, const char *var, char **prefix_ret, cha
 	}
 done:
 	if (prefix_ret) {
-		*prefix_ret = xstrndup(var, len);
+		*prefix_ret = str_ndup(pool, var, len);
 	}
 	if (helper_ret) {
-		*helper_ret = xstrdup(suffix);
+		*helper_ret = str_dup(pool, suffix);
 	}
 
 	return 1;
 }
 
 char *
-extract_subpkg(struct Parser *parser, const char *var_, char **subpkg_ret)
+extract_subpkg(struct Mempool *pool, struct Parser *parser, const char *var_, char **subpkg_ret)
 {
 	char *var = NULL;
 	const char *subpkg = NULL;
@@ -1812,9 +1797,9 @@ extract_subpkg(struct Parser *parser, const char *var_, char **subpkg_ret)
 		if (c != '-' && c != '_' && !islower(c) && !isdigit(c)) {
 			if (c == '.') {
 				subpkg = var_ + i + 1;
-				var = xstrndup(var_, i);
+				var = str_ndup(pool, var_, i);
 			} else {
-				var = xstrdup(var_);
+				var = str_dup(pool, var_);
 			}
 			break;
 		}
@@ -1842,14 +1827,13 @@ extract_subpkg(struct Parser *parser, const char *var_, char **subpkg_ret)
 			if (subpkg_ret) {
 				*subpkg_ret = NULL;
 			}
-			free(var);
 			return NULL;
 		}
 	}
 
 	if (subpkg_ret) {
 		if (subpkg) {
-			*subpkg_ret = xstrdup(subpkg);
+			*subpkg_ret = str_dup(pool, subpkg);
 		} else {
 			*subpkg_ret = NULL;
 		}
@@ -1859,17 +1843,13 @@ extract_subpkg(struct Parser *parser, const char *var_, char **subpkg_ret)
 }
 
 int
-is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, char **helper_ret, char **subpkg_ret)
+is_options_helper(struct Mempool *pool, struct Parser *parser, const char *var_, char **prefix_ret, char **helper_ret, char **subpkg_ret)
 {
-	SCOPE_MEMPOOL(pool);
-
 	char *subpkg;
 	char *var;
-	if ((var = extract_subpkg(parser, var_, &subpkg)) == NULL) {
+	if ((var = extract_subpkg(pool, parser, var_, &subpkg)) == NULL) {
 		return 0;
 	}
-	mempool_add(pool, var, free);
-	mempool_add(pool, subpkg, free);
 
 	const char *suffix = NULL;
 	if (str_endswith(var, "DESC")) {
@@ -1930,7 +1910,7 @@ is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, ch
 		goto done;
 	}
 
-	char *prefix = mempool_add(pool, xstrndup(var, len - 1), free);
+	char *prefix = str_ndup(pool, var, len - 1);
 	struct Set *groups = parser_metadata(parser, PARSER_METADATA_OPTION_GROUPS);
 	struct Set *options = parser_metadata(parser, PARSER_METADATA_OPTIONS);
 	if (strcmp(suffix, "DESC") == 0) {
@@ -1953,14 +1933,14 @@ is_options_helper(struct Parser *parser, const char *var_, char **prefix_ret, ch
 
 done:
 	if (prefix_ret) {
-		*prefix_ret = xstrndup(var, len);
+		*prefix_ret = str_ndup(pool, var, len);
 	}
 	if (helper_ret) {
-		*helper_ret = xstrdup(suffix);
+		*helper_ret = str_dup(pool, suffix);
 	}
 	if (subpkg_ret) {
 		if (subpkg) {
-			*subpkg_ret = xstrdup(subpkg);
+			*subpkg_ret = str_dup(pool, subpkg);
 		} else {
 			*subpkg_ret = NULL;
 		}
@@ -1970,7 +1950,7 @@ done:
 }
 
 int
-matches_options_group(struct Parser *parser, const char *s, char **prefix)
+matches_options_group(struct Mempool *pool, struct Parser *parser, const char *s, char **prefix)
 {
 	size_t i = 0;
 	// ^_?
@@ -2010,7 +1990,7 @@ matches_options_group(struct Parser *parser, const char *s, char **prefix)
 			}
 		}
 		if (prefix) {
-			*prefix = xstrndup(var, strlen(var) - 1);
+			*prefix = str_ndup(pool, var, strlen(var) - 1);
 		}
 		return 1;
 	} else {
@@ -2019,7 +1999,7 @@ matches_options_group(struct Parser *parser, const char *s, char **prefix)
 		SET_FOREACH (groups, const char *, group) {
 			if (strcmp(s + i, group) == 0) {
 				if (prefix) {
-					*prefix = xstrndup(var, strlen(var) - 1);
+					*prefix = str_ndup(pool, var, strlen(var) - 1);
 				}
 				return 1;
 			}
@@ -2030,17 +2010,15 @@ matches_options_group(struct Parser *parser, const char *s, char **prefix)
 }
 
 static int
-is_cabal_datadir_vars_helper(const char *var, const char *exe, char **prefix, char **suffix)
+is_cabal_datadir_vars_helper(struct Mempool *pool, const char *var, const char *exe, char **prefix, char **suffix)
 {
-	SCOPE_MEMPOOL(pool);
-
-	char *buf = mempool_add(pool, str_printf( "%s_DATADIR_VARS", exe), free);
+	char *buf = str_printf(pool, "%s_DATADIR_VARS", exe);
 	if (strcmp(var, buf) == 0) {
 		if (prefix) {
-			*prefix = xstrdup(exe);
+			*prefix = str_dup(pool, exe);
 		}
 		if (suffix) {
-			*suffix = xstrdup("DATADIR_VARS");
+			*suffix = str_dup(pool, "DATADIR_VARS");
 		}
 		return 1;
 	} else {
@@ -2049,15 +2027,15 @@ is_cabal_datadir_vars_helper(const char *var, const char *exe, char **prefix, ch
 }
 
 int
-is_cabal_datadir_vars(struct Parser *parser, const char *var, char **prefix, char **suffix)
+is_cabal_datadir_vars(struct Mempool *pool, struct Parser *parser, const char *var, char **prefix, char **suffix)
 {
 	if (parser_settings(parser).behavior & PARSER_ALLOW_FUZZY_MATCHING) {
 		if (str_endswith(var, "_DATADIR_VARS")) {
 			if (prefix) {
-				*prefix = xstrndup(var, strlen(var) - strlen("_DATADIR_VARS"));
+				*prefix = str_ndup(pool, var, strlen(var) - strlen("_DATADIR_VARS"));
 			}
 			if (suffix) {
-				*suffix = xstrdup("DATADIR_VARS");
+				*suffix = str_dup(pool, "DATADIR_VARS");
 			}
 			return 1;
 		}
@@ -2069,7 +2047,7 @@ is_cabal_datadir_vars(struct Parser *parser, const char *var, char **prefix, cha
 	}
 
 	SET_FOREACH (parser_metadata(parser, PARSER_METADATA_CABAL_EXECUTABLES), const char *, exe) {
-		if (is_cabal_datadir_vars_helper(var, exe, prefix, suffix)) {
+		if (is_cabal_datadir_vars_helper(pool, var, exe, prefix, suffix)) {
 			return 1;
 		}
 	}
@@ -2078,28 +2056,28 @@ is_cabal_datadir_vars(struct Parser *parser, const char *var, char **prefix, cha
 }
 
 static int
-is_shebang_lang_helper(const char *var, const char *lang, char **prefix, char **suffix)
+is_shebang_lang_helper(struct Mempool *extpool, const char *var, const char *lang, char **prefix, char **suffix)
 {
 	SCOPE_MEMPOOL(pool);
 
-	char *buf = mempool_add(pool, str_printf("%s_OLD_CMD", lang), free);
+	char *buf = str_printf(pool, "%s_OLD_CMD", lang);
 	if (strcmp(var, buf) == 0) {
 		if (prefix) {
-			*prefix = xstrdup(lang);
+			*prefix = str_dup(extpool, lang);
 		}
 		if (suffix) {
-			*suffix = xstrdup("OLD_CMD");
+			*suffix = str_dup(extpool, "OLD_CMD");
 		}
 		return 1;
 	}
 
-	buf = mempool_add(pool, str_printf("%s_CMD", lang), free);
+	buf = str_printf(pool, "%s_CMD", lang);
 	if (strcmp(var, buf) == 0) {
 		if (prefix) {
-			*prefix = xstrdup(lang);
+			*prefix = str_dup(extpool, lang);
 		}
 		if (suffix) {
-			*suffix = xstrdup("CMD");
+			*suffix = str_dup(extpool, "CMD");
 		}
 		return 1;
 	}
@@ -2108,24 +2086,24 @@ is_shebang_lang_helper(const char *var, const char *lang, char **prefix, char **
 }
 
 int
-is_shebang_lang(struct Parser *parser, const char *var, char **prefix, char **suffix)
+is_shebang_lang(struct Mempool *pool, struct Parser *parser, const char *var, char **prefix, char **suffix)
 {
 	if (parser_settings(parser).behavior & PARSER_ALLOW_FUZZY_MATCHING) {
 		if (str_endswith(var, "_OLD_CMD")) {
 			if (prefix) {
-				*prefix = xstrndup(var, strlen(var) - strlen("_OLD_CMD"));
+				*prefix = str_ndup(pool, var, strlen(var) - strlen("_OLD_CMD"));
 			}
 			if (suffix) {
-				*suffix = xstrdup("OLD_CMD");
+				*suffix = str_dup(pool, "OLD_CMD");
 			}
 			return 1;
 		}
 		if (str_endswith(var, "_CMD")) {
 			if (prefix) {
-				*prefix = xstrndup(var, strlen(var) - strlen("_CMD"));
+				*prefix = str_ndup(pool, var, strlen(var) - strlen("_CMD"));
 			}
 			if (suffix) {
-				*suffix = xstrdup("CMD");
+				*suffix = str_dup(pool, "CMD");
 			}
 			return 1;
 		}
@@ -2138,14 +2116,14 @@ is_shebang_lang(struct Parser *parser, const char *var, char **prefix, char **su
 
 	for (size_t i = 0; i < nitems(static_shebang_langs_); i++) {
 		const char *lang = static_shebang_langs_[i];
-		if (is_shebang_lang_helper(var, lang, prefix, suffix)) {
+		if (is_shebang_lang_helper(pool, var, lang, prefix, suffix)) {
 			return 1;
 		}
 	}
 
 	int ok = 0;
 	SET_FOREACH (parser_metadata(parser, PARSER_METADATA_SHEBANG_LANGS), const char *, lang) {
-		if (is_shebang_lang_helper(var, lang, prefix, suffix)) {
+		if (is_shebang_lang_helper(pool, var, lang, prefix, suffix)) {
 			ok = 1;
 			break;
 		}
@@ -2182,19 +2160,19 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 		}
 	}
 
-	if (is_flavors_helper(parser, var, NULL, NULL)) {
+	if (is_flavors_helper(pool, parser, var, NULL, NULL)) {
 		return BLOCK_FLAVORS_HELPER;
 	}
 
-	if (is_shebang_lang(parser, var, NULL, NULL)) {
+	if (is_shebang_lang(pool, parser, var, NULL, NULL)) {
 		return BLOCK_SHEBANGFIX;
 	}
 
-	if (is_cabal_datadir_vars(parser, var, NULL, NULL)) {
+	if (is_cabal_datadir_vars(pool, parser, var, NULL, NULL)) {
 		return BLOCK_CABAL;
 	}
 
-	if (is_options_helper(parser, var, NULL, NULL, NULL)) {
+	if (is_options_helper(pool, parser, var, NULL, NULL, NULL)) {
 		if (str_endswith(var, "_DESC")) {
 			return BLOCK_OPTDESC;
 		} else {
@@ -2202,12 +2180,12 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 		}
 	}
 
-	if (matches_options_group(parser, var, NULL)) {
+	if (matches_options_group(pool, parser, var, NULL)) {
 		return BLOCK_OPTDEF;
 	}
 
 	const char *tmp = var;
-	char *var_without_subpkg = mempool_add(pool, extract_subpkg(parser, var, NULL), free);
+	char *var_without_subpkg = extract_subpkg(pool, parser, var, NULL);
 	if (var_without_subpkg) {
 		tmp = var_without_subpkg;
 	}
@@ -2312,16 +2290,12 @@ compare_order(const void *ap, const void *bp, void *userdata)
 		char *aprefix = NULL;
 		char *bhelper = NULL;
 		char *bprefix = NULL;
-		if (!is_flavors_helper(parser, a, &aprefix, &ahelper) ||
-		    !is_flavors_helper(parser, b, &bprefix, &bhelper)) {
+		if (!is_flavors_helper(pool, parser, a, &aprefix, &ahelper) ||
+		    !is_flavors_helper(pool, parser, b, &bprefix, &bhelper)) {
 			abort();
 		}
 		assert(ahelper != NULL && aprefix != NULL);
 		assert(bhelper != NULL && bprefix != NULL);
-		mempool_add(pool, aprefix, free);
-		mempool_add(pool, ahelper, free);
-		mempool_add(pool, bprefix, free);
-		mempool_add(pool, bhelper, free);
 
 		// Only compare if common prefix (helper for the same flavor)
 		int prefix_score = strcmp(aprefix, bprefix);
@@ -2358,16 +2332,12 @@ compare_order(const void *ap, const void *bp, void *userdata)
 			char *asuffix = NULL;
 			char *blang = NULL;
 			char *bsuffix = NULL;
-			is_shebang_lang(parser, a, &alang, &asuffix);
-			is_shebang_lang(parser, b, &blang, &bsuffix);
+			is_shebang_lang(pool, parser, a, &alang, &asuffix);
+			is_shebang_lang(pool, parser, b, &blang, &bsuffix);
 			assert(alang);
 			assert(asuffix);
 			assert(blang);
 			assert(bsuffix);
-			mempool_add(pool, alang, free);
-			mempool_add(pool, asuffix, free);
-			mempool_add(pool, blang, free);
-			mempool_add(pool, bsuffix, free);
 
 			ssize_t ascore = -1;
 			ssize_t bscore = -1;
@@ -2422,16 +2392,12 @@ compare_order(const void *ap, const void *bp, void *userdata)
 			char *asuffix = NULL;
 			char *bexe = NULL;
 			char *bsuffix = NULL;
-			is_cabal_datadir_vars(parser, a, &aexe, &asuffix);
-			is_cabal_datadir_vars(parser, b, &bexe, &bsuffix);
+			is_cabal_datadir_vars(pool, parser, a, &aexe, &asuffix);
+			is_cabal_datadir_vars(pool, parser, b, &bexe, &bsuffix);
 			assert(aexe);
 			assert(asuffix);
 			assert(bexe);
 			assert(bsuffix);
-			mempool_add(pool, aexe, free);
-			mempool_add(pool, asuffix, free);
-			mempool_add(pool, bexe, free);
-			mempool_add(pool, bsuffix, free);
 
 			ssize_t ascore = -1;
 			ssize_t bscore = -1;
@@ -2473,16 +2439,12 @@ compare_order(const void *ap, const void *bp, void *userdata)
 		char *bhelper = NULL;
 		char *bprefix = NULL;
 		// TODO SUBPKG
-		if (!is_options_helper(parser, a, &aprefix, &ahelper, NULL) ||
-		    !is_options_helper(parser, b, &bprefix, &bhelper, NULL)) {
+		if (!is_options_helper(pool, parser, a, &aprefix, &ahelper, NULL) ||
+		    !is_options_helper(pool, parser, b, &bprefix, &bhelper, NULL)) {
 			abort();
 		}
 		assert(ahelper != NULL && aprefix != NULL);
 		assert(bhelper != NULL && bprefix != NULL);
-		mempool_add(pool, aprefix, free);
-		mempool_add(pool, ahelper, free);
-		mempool_add(pool, bprefix, free);
-		mempool_add(pool, bhelper, free);
 
 		// Only compare if common prefix (helper for the same option)
 		int prefix_score = strcmp(aprefix, bprefix);
@@ -2535,19 +2497,15 @@ compare_order(const void *ap, const void *bp, void *userdata)
 	}
 
 	char *asubpkg = NULL;
-	char *a_without_subpkg = extract_subpkg(parser, a, &asubpkg);
+	char *a_without_subpkg = extract_subpkg(pool, parser, a, &asubpkg);
 	if (a_without_subpkg == NULL) {
-		a_without_subpkg = xstrdup(a);
+		a_without_subpkg = str_dup(pool, a);
 	}
 	char *bsubpkg = NULL;
-	char *b_without_subpkg = extract_subpkg(parser, b, &bsubpkg);
+	char *b_without_subpkg = extract_subpkg(pool, parser, b, &bsubpkg);
 	if (b_without_subpkg == NULL) {
-		b_without_subpkg = xstrdup(b);
+		b_without_subpkg = str_dup(pool, b);
 	}
-	mempool_add(pool, a_without_subpkg, free);
-	mempool_add(pool, asubpkg, free);
-	mempool_add(pool, b_without_subpkg, free);
-	mempool_add(pool, bsubpkg, free);
 	int ascore = -1;
 	int bscore = -1;
 	for (size_t i = 0; i < nitems(variable_order_) && (ascore == -1 || bscore == -1); i++) {
@@ -2575,10 +2533,8 @@ compare_order(const void *ap, const void *bp, void *userdata)
 }
 
 void
-target_extract_opt(struct Parser *parser, const char *target, char **target_out, char **opt_out, int *state)
+target_extract_opt(struct Mempool *pool, struct Parser *parser, const char *target, char **target_out, char **opt_out, int *state)
 {
-	SCOPE_MEMPOOL(pool);
-
 	int colon = str_endswith(target, ":");
 	int on;
 	if ((colon && ((on = str_endswith(target, "-on:")) || str_endswith(target, "-off:"))) ||
@@ -2594,19 +2550,19 @@ target_extract_opt(struct Parser *parser, const char *target, char **target_out,
 		if (colon) {
 			opt_suffix_len++;
 		}
-		char *opt = mempool_add(pool, xstrndup(p, strlen(p) - opt_suffix_len), free);
-		char *tmp = mempool_add(pool, str_printf("%s_USES", opt), free);
-		if (is_options_helper(parser, tmp, NULL, NULL, NULL)) {
-			char *target_root = mempool_add(pool, xstrndup(target, strlen(target) - strlen(p) - 1), free);
+		char *opt = str_ndup(pool, p, strlen(p) - opt_suffix_len);
+		char *tmp = str_printf(pool, "%s_USES", opt);
+		if (is_options_helper(pool, parser, tmp, NULL, NULL, NULL)) {
+			char *target_root = str_ndup(pool, target, strlen(target) - strlen(p) - 1);
 			for (size_t i = 0; i < nitems(target_order_); i++) {
 				if (target_order_[i].opthelper &&
 				    strcmp(target_order_[i].name, target_root) == 0) {
 					*state = on;
 					if (opt_out) {
-						*opt_out = xstrdup(opt);
+						*opt_out = str_dup(pool, opt);
 					}
 					if (target_out) {
-						*target_out = xstrdup(target_root);
+						*target_out = str_dup(pool, target_root);
 					}
 					return;
 				}
@@ -2622,13 +2578,13 @@ target_extract_opt(struct Parser *parser, const char *target, char **target_out,
 		size_t len = strlen(target);
 		if (len > 0) {
 			if (target_out) {
-				*target_out = xstrndup(target, len - 1);
+				*target_out = str_ndup(pool, target, len - 1);
 			}
 			return;
 		}
 	}
 	if (target_out) {
-		*target_out = xstrdup(target);
+		*target_out = str_dup(pool, target);
 	}
 }
 
@@ -2639,8 +2595,7 @@ is_known_target(struct Parser *parser, const char *target)
 
 	char *root;
 	int state;
-	target_extract_opt(parser, target, &root, NULL, &state);
-	mempool_add(pool, root, free);
+	target_extract_opt(pool, parser, target, &root, NULL, &state);
 
 	for (size_t i = 0; i < nitems(target_order_); i++) {
 		if (strcmp(target_order_[i].name, root) == 0) {
@@ -2688,12 +2643,8 @@ compare_target_order(const void *ap, const void *bp, void *userdata)
 
 	char *a, *b, *aopt, *bopt;
 	int aoptstate, boptstate;
-	target_extract_opt(parser, a_, &a, &aopt, &aoptstate);
-	target_extract_opt(parser, b_, &b, &bopt, &boptstate);
-	mempool_add(pool, a, free);
-	mempool_add(pool, b, free);
-	mempool_add(pool, aopt, free);
-	mempool_add(pool, bopt, free);
+	target_extract_opt(pool, parser, a_, &a, &aopt, &aoptstate);
+	target_extract_opt(pool, parser, b_, &b, &bopt, &boptstate);
 
 	ssize_t aindex = -1;
 	ssize_t bindex = -1;

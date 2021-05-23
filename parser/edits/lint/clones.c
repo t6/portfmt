@@ -33,6 +33,7 @@
 #include <stdio.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/str.h>
 #include <libias/util.h>
@@ -48,7 +49,7 @@ add_clones(struct Set *clones, struct Set *seen, struct Set *seen_in_cond)
 {
 	SET_FOREACH(seen_in_cond, char *, name) {
 		if (set_contains(seen, name) && !set_contains(clones, name)) {
-			set_add(clones, xstrdup(name));
+			set_add(clones, str_dup(NULL, name));
 		}
 	}
 	set_truncate(seen_in_cond);
@@ -56,12 +57,14 @@ add_clones(struct Set *clones, struct Set *seen, struct Set *seen_in_cond)
 
 PARSER_EDIT(lint_clones)
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct Set **clones_ret = userdata;
 	int no_color = parser_settings(parser).behavior & PARSER_OUTPUT_NO_COLOR;
 
-	struct Set *seen = set_new(str_compare, NULL, NULL);
-	struct Set *seen_in_cond = set_new(str_compare, NULL, NULL);
-	struct Set *clones = set_new(str_compare, NULL, free);
+	struct Set *seen = mempool_set(pool, str_compare, NULL, NULL);
+	struct Set *seen_in_cond = mempool_set(pool, str_compare, NULL, NULL);
+	struct Set *clones = mempool_set(pool, str_compare, NULL, free);
 	int in_conditional = 0;
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
 		switch (token_type(t)) {
@@ -93,7 +96,7 @@ PARSER_EDIT(lint_clones)
 					set_add(seen_in_cond, name);
 				} else if (set_contains(seen, name)) {
 					if (!set_contains(clones, name)) {
-						set_add(clones, xstrdup(name));
+						set_add(clones, str_dup(NULL, name));
 					}
 				} else {
 					set_add(seen, name);
@@ -119,12 +122,8 @@ PARSER_EDIT(lint_clones)
 		}
 	}
 
-	set_free(seen);
-	set_free(seen_in_cond);
-	if (clones_ret == NULL) {
-		set_free(clones);
-	} else {
-		*clones_ret = clones;
+	if (clones_ret != NULL) {
+		*clones_ret = mempool_forget(pool, clones);
 	}
 
 	return NULL;

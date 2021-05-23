@@ -37,6 +37,8 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include <libias/mempool.h>
+
 #include "mainutils.h"
 #include "parser.h"
 
@@ -52,6 +54,8 @@ usage()
 int
 main(int argc, char *argv[])
 {
+	SCOPE_MEMPOOL(pool);
+
 	struct ParserSettings settings;
 
 	parser_init_settings(&settings);
@@ -59,7 +63,7 @@ main(int argc, char *argv[])
 		PARSER_DEDUP_TOKENS | PARSER_OUTPUT_REFORMAT |
 		PARSER_ALLOW_FUZZY_MATCHING | PARSER_SANITIZE_COMMENTS;
 
-	if (!read_common_args(&argc, &argv, &settings, "D::dituUw:", NULL)) {
+	if (!read_common_args(&argc, &argv, &settings, "D::dituUw:", pool, NULL)) {
 		usage();
 	}
 
@@ -69,7 +73,7 @@ main(int argc, char *argv[])
 	if (settings.behavior & PARSER_OUTPUT_INPLACE) {
 		behavior |= MAINUTILS_OPEN_FILE_INPLACE;
 	}
-	if (!open_file(behavior, &argc, &argv, &fp_in, &fp_out, &settings.filename)) {
+	if (!open_file(behavior, &argc, &argv, pool, &fp_in, &fp_out, &settings.filename)) {
 		if (fp_in == NULL) {
 			err(1, "fopen");
 		} else {
@@ -82,16 +86,14 @@ main(int argc, char *argv[])
 
 	enter_sandbox();
 
-	struct Parser *parser = parser_new(&settings);
-	free(settings.filename);
-	settings.filename = NULL;
+	struct Parser *parser = parser_new(pool, &settings);
 	enum ParserError error = parser_read_from_file(parser, fp_in);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 	error = parser_read_finish(parser);
 	if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	int status = 0;
@@ -99,13 +101,7 @@ main(int argc, char *argv[])
 	if (error == PARSER_ERROR_DIFFERENCES_FOUND) {
 		status = 2;
 	} else if (error != PARSER_ERROR_OK) {
-		errx(1, "%s", parser_error_tostring(parser));
-	}
-	parser_free(parser);
-
-	fclose(fp_out);
-	if (fp_out != fp_in) {
-		fclose(fp_in);
+		errx(1, "%s", parser_error_tostring(parser, pool));
 	}
 
 	return status;

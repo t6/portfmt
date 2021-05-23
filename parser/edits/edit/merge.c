@@ -39,6 +39,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/util.h>
 
 #include "conditional.h"
@@ -514,23 +515,25 @@ PARSER_EDIT(merge_existent_var)
 
 PARSER_EDIT(edit_merge)
 {
+	SCOPE_MEMPOOL(pool);
+
 	const struct ParserEdit *params = userdata;
 	if (params == NULL ||
 	    params->arg1 != NULL ||
 	    params->subparser == NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 
 	struct Array *subtokens = NULL;
-	if (parser_edit(params->subparser, extract_tokens, &subtokens) != PARSER_ERROR_OK) {
+	if (parser_edit(params->subparser, pool, extract_tokens, &subtokens) != PARSER_ERROR_OK) {
 		return NULL;
 	}
 
 	struct Variable *var = NULL;
 	int merge = 0;
-	struct Array *mergetokens = array_new();
-	struct Array *nonvars = array_new();
+	struct Array *mergetokens = mempool_array(pool);
+	struct Array *nonvars = mempool_array(pool);
 	ARRAY_FOREACH(subtokens, struct Token *, t) {
 		switch (token_type(t)) {
 		case VARIABLE_START:
@@ -553,12 +556,12 @@ PARSER_EDIT(edit_merge)
 				if (params->merge_behavior & PARSER_MERGE_IGNORE_VARIABLES_IN_CONDITIONALS) {
 					behavior |= PARSER_LOOKUP_IGNORE_VARIABLES_IN_CONDITIIONALS;
 				}
-				if (!parser_lookup_variable(parser, variable_name(var), behavior, NULL, NULL)) {
-					*error = parser_edit(parser, insert_variable, var);
-					if (*error != PARSER_ERROR_OK) {
-						goto cleanup;
+				if (!parser_lookup_variable(parser, variable_name(var), behavior, pool, NULL, NULL)) {
+					enum ParserError error = parser_edit(parser, pool, insert_variable, var);
+					if (error != PARSER_ERROR_OK) {
+						return NULL;
 					}
-					parser_edit(parser, extract_tokens, &ptokens);
+					parser_edit(parser, pool, extract_tokens, &ptokens);
 				}
 				merge = 1;
 				array_append(mergetokens, t);
@@ -581,11 +584,10 @@ PARSER_EDIT(edit_merge)
 				par.var = var;
 				par.nonvars = nonvars;
 				par.values = mergetokens;
-				*error = parser_edit(parser, merge_existent_var, &par);
-				if (*error != PARSER_ERROR_OK) {
-					goto cleanup;
+				if (parser_edit(parser, pool, merge_existent_var, &par) != PARSER_ERROR_OK) {
+					return NULL;
 				}
-				parser_edit(parser, extract_tokens, &ptokens);
+				parser_edit(parser, pool, extract_tokens, &ptokens);
 				array_truncate(nonvars);
 			}
 			var = NULL;
@@ -603,9 +605,6 @@ PARSER_EDIT(edit_merge)
 		}
 	}
 
-cleanup:
-	array_free(nonvars);
-	array_free(mergetokens);
 	return NULL;
 }
 

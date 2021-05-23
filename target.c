@@ -87,13 +87,9 @@ consume_token(const char *line, size_t pos, char startchar, char endchar)
 static void
 add_name(struct Mempool *pool, struct Array *names, const char *buf, size_t start, size_t i)
 {
-	char *tmp = str_substr(buf, start, i);
-	char *name = str_trim(tmp);
-	free(tmp);
+	char *name = str_trim(pool, str_substr(pool, buf, start, i));
 	if (*name) {
-		array_append(names, mempool_add(pool, name, free));
-	} else {
-		free(name);
+		array_append(names, name);
 	}
 }
 
@@ -137,11 +133,9 @@ consume_names(struct Mempool *pool, const char *buf, struct Array *names, int de
 
 	if (deps) {
 		if (buf[start] && buf[start] != '#') {
-			char *name = str_trim(buf + start);
+			char *name = str_trim(pool, buf + start);
 			if (*name) {
-				array_append(names, mempool_add(pool, str_trim(buf + start), free));
-			} else {
-				free(name);
+				array_append(names, name);
 			}
 		}
 	}
@@ -167,12 +161,12 @@ target_new(char *buf)
 	}
 	const char *comment = consume_names(pool, after_target, deps, 1);
 
-	struct Target *target = xmalloc(sizeof(struct Target));
+	struct Target *target = mempool_alloc(pool, sizeof(struct Target));
 	target->pool = pool;
 	target->deps = deps;
 	target->names = names;
 	if (comment) {
-		target->comment = mempool_add(pool, xstrdup(comment), free);
+		target->comment = str_dup(pool, comment);
 	}
 	return target;
 }
@@ -180,18 +174,19 @@ target_new(char *buf)
 struct Target *
 target_clone(struct Target *target)
 {
-	struct Target *newtarget = xmalloc(sizeof(struct Target));
-	newtarget->pool = mempool_new();
-	newtarget->deps = array_new();
+	struct Mempool *pool = mempool_new();
+	struct Target *newtarget = mempool_alloc(pool, sizeof(struct Target));
+	newtarget->pool = pool;
+	newtarget->deps = mempool_array(pool);
 	ARRAY_FOREACH(target->deps, char *, dep) {
-		array_append(newtarget->deps, mempool_add(newtarget->pool, xstrdup(dep), free));
+		array_append(newtarget->deps, str_dup(pool, dep));
 	}
-	newtarget->names = array_new();
+	newtarget->names = mempool_array(pool);
 	ARRAY_FOREACH(target->names, char *, name) {
-		array_append(newtarget->names, mempool_add(newtarget->pool, xstrdup(name), free));
+		array_append(newtarget->names, str_dup(pool, name));
 	}
 	if (target->comment) {
-		newtarget->comment = mempool_add(newtarget->pool, xstrdup(target->comment), free);
+		newtarget->comment = str_dup(pool, target->comment);
 	}
 	return newtarget;
 }
@@ -203,7 +198,6 @@ target_free(struct Target *target)
 		return;
 	}
 	mempool_free(target->pool);
-	free(target);
 }
 
 const char *

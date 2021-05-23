@@ -48,14 +48,14 @@
 #include "variable.h"
 
 static char *
-get_merge_script(struct Parser *parser, const char *variable, enum ParserError *error, char **error_msg)
+get_merge_script(struct Mempool *extpool, struct Parser *parser, const char *variable)
 {
 	SCOPE_MEMPOOL(pool);
 	struct Array *script = mempool_array(pool);
 
 	struct Variable *var;
 	if (strcmp(variable, "PORTEPOCH") == 0) {
-		if ((var = parser_lookup_variable(parser, "PORTREVISION", PARSER_LOOKUP_FIRST, NULL, NULL)) &&
+		if ((var = parser_lookup_variable(parser, "PORTREVISION", PARSER_LOOKUP_FIRST, pool, NULL, NULL)) &&
 		    variable_modifier(var) == MODIFIER_OPTIONAL) {
 			array_append(script, "PORTREVISION=0\n");
 		} else {
@@ -65,19 +65,16 @@ get_merge_script(struct Parser *parser, const char *variable, enum ParserError *
 
 	char *comment;
 	char *current_revision;
-	if ((var = parser_lookup_variable_str(parser, variable, PARSER_LOOKUP_FIRST, &current_revision, &comment)) != NULL) {
-		mempool_add(pool, current_revision, free);
-		mempool_add(pool, comment, free);
+	if ((var = parser_lookup_variable_str(parser, variable, PARSER_LOOKUP_FIRST, pool, &current_revision, &comment)) != NULL) {
 		const char *errstr = NULL;
 		int rev = strtonum(current_revision, 0, INT_MAX, &errstr);
 		if (errstr == NULL) {
 			rev++;
 		} else {
-			*error = PARSER_ERROR_EXPECTED_INT;
-			*error_msg = xstrdup(errstr);
+			parser_set_error(parser, PARSER_ERROR_EXPECTED_INT, errstr);
 			return NULL;
 		}
-		if (parser_lookup_variable(parser, "MASTERDIR", PARSER_LOOKUP_FIRST, NULL, NULL) == NULL) {
+		if (parser_lookup_variable(parser, "MASTERDIR", PARSER_LOOKUP_FIRST, pool, NULL, NULL) == NULL) {
 			// In slave ports we do not delete the variable first since
 			// they have a non-uniform structure and edit_merge will probably
 			// insert it into a non-optimal position.
@@ -86,24 +83,25 @@ get_merge_script(struct Parser *parser, const char *variable, enum ParserError *
 			array_append(script, variable);
 			array_append(script, "!=\n");
 		}
-		array_append(script, mempool_add(pool, variable_tostring(var), free));
-		char *buf = str_printf("%d %s\n", rev, comment);
-		array_append(script, mempool_add(pool, buf, free));
+		array_append(script, variable_tostring(var, pool));
+		array_append(script, str_printf(pool, "%d %s\n", rev, comment));
 	} else {
 		array_append(script, variable);
 		array_append(script, "=1\n");
 	}
 
-	return str_join(script, "");
+	return str_join(extpool, script, "");
 }
 
 PARSER_EDIT(edit_bump_revision)
 {
+	SCOPE_MEMPOOL(pool);
+
 	const struct ParserEdit *params = userdata;
 	if (params == NULL ||
 	    params->subparser != NULL ||
 	    params->merge_behavior != PARSER_MERGE_DEFAULT) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 	const char *variable = params->arg1;
@@ -112,25 +110,21 @@ PARSER_EDIT(edit_bump_revision)
 		variable = "PORTREVISION";
 	}
 
-	char *script = get_merge_script(parser, variable, error, error_msg);
+	char *script = get_merge_script(pool, parser, variable);
 	struct ParserSettings settings = parser_settings(parser);
-	struct Parser *subparser = parser_new(&settings);
-	*error = parser_read_from_buffer(subparser, script, strlen(script));
-	if (*error != PARSER_ERROR_OK) {
-		goto cleanup;
+	struct Parser *subparser = parser_new(pool, &settings);
+	enum ParserError error = parser_read_from_buffer(subparser, script, strlen(script));
+	if (error != PARSER_ERROR_OK) {
+		return NULL;
 	}
-	*error = parser_read_finish(subparser);
-	if (*error != PARSER_ERROR_OK) {
-		goto cleanup;
+	error = parser_read_finish(subparser);
+	if (error != PARSER_ERROR_OK) {
+		return NULL;
 	}
-	*error = parser_merge(parser, subparser, params->merge_behavior | PARSER_MERGE_SHELL_IS_DELETE | PARSER_MERGE_OPTIONAL_LIKE_ASSIGN);
-	if (*error != PARSER_ERROR_OK) {
-		goto cleanup;
+	error = parser_merge(parser, subparser, params->merge_behavior | PARSER_MERGE_SHELL_IS_DELETE | PARSER_MERGE_OPTIONAL_LIKE_ASSIGN);
+	if (error != PARSER_ERROR_OK) {
+		return NULL;
 	}
-
-cleanup:
-	free(script);
-	parser_free(subparser);
 
 	return NULL;
 }

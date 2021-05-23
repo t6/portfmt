@@ -28,6 +28,7 @@
 #pragma once
 
 struct Conditional;
+struct Mempool;
 
 enum ConditionalType {
 	COND_DINCLUDE,
@@ -61,5 +62,5 @@ enum ConditionalType {
 struct Conditional *conditional_new(char *);
 struct Conditional *conditional_clone(struct Conditional *);
 void conditional_free(struct Conditional *);
-char *conditional_tostring(struct Conditional *);
+char *conditional_tostring(struct Conditional *, struct Mempool *);
 enum ConditionalType conditional_type(struct Conditional *);

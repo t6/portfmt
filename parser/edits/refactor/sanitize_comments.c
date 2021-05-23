@@ -32,6 +32,7 @@
 #include <stdio.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/str.h>
 
 #include "parser.h"
@@ -40,8 +41,10 @@
 
 PARSER_EDIT(refactor_sanitize_comments)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (userdata != NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 
@@ -57,9 +60,8 @@ PARSER_EDIT(refactor_sanitize_comments)
 			break;
 		case COMMENT:
 			if (in_target) {
-				char *comment = str_trim(token_data(t));
+				char *comment = str_trim(pool, token_data(t));
 				struct Token *c = token_new_comment(token_lines(t), comment, token_conditional(t));
-				free(comment);
 				array_append(tokens, c);
 				parser_mark_edited(parser, c);
 				parser_mark_for_gc(parser, t);

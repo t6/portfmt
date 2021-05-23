@@ -47,6 +47,7 @@
 
 #include <libias/array.h>
 #include <libias/diff.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/str.h>
 #include <libias/util.h>
@@ -61,6 +62,7 @@ struct PortscanLogDir {
 };
 
 struct PortscanLog {
+	struct Mempool *pool;
 	struct Array *entries;
 };
 
@@ -75,21 +77,23 @@ struct PortscanLogEntry {
 #define PORTSCAN_LOG_INIT "/dev/null"
 
 static void portscan_log_sort(struct PortscanLog *);
-static char *log_entry_tostring(const struct PortscanLogEntry *);
+static char *log_entry_tostring(const struct PortscanLogEntry *, struct Mempool *);
 static int log_entry_compare(const void *, const void *, void *);
-static struct PortscanLogEntry *log_entry_parse(const char *);
+static struct PortscanLogEntry *log_entry_parse(struct Mempool *, const char *);
 
 static FILE *log_open(struct PortscanLogDir *, const char *);
 static int log_update_latest(struct PortscanLogDir *, const char *);
-static char *log_filename(const char *);
-static char *log_commit(int);
+static char *log_filename(const char *, struct Mempool *);
+static char *log_commit(int, struct Mempool *);
 
 struct PortscanLog *
-portscan_log_new()
+portscan_log_new(struct Mempool *extpool)
 {
-	struct PortscanLog *log = xmalloc(sizeof(struct PortscanLog));
-	log->entries = array_new();
-	return log;
+	struct Mempool *pool = mempool_new();
+	struct PortscanLog *log = mempool_alloc(pool, sizeof(struct PortscanLog));
+	log->pool = pool;
+	log->entries = mempool_array(pool);
+	return mempool_add(extpool, log, portscan_log_free);
 }
 
 void
@@ -98,14 +102,7 @@ portscan_log_free(struct PortscanLog *log)
 	if (log == NULL) {
 		return;
 	}
-
-	ARRAY_FOREACH(log->entries, struct PortscanLogEntry *, entry) {
-		free(entry->origin);
-		free(entry->value);
-		free(entry);
-	}
-	array_free(log->entries);
-	free(log);
+	mempool_free(log->pool);
 }
 
 void
@@ -121,51 +118,38 @@ portscan_log_len(struct PortscanLog *log)
 }
 
 char *
-log_entry_tostring(const struct PortscanLogEntry *entry)
+log_entry_tostring(const struct PortscanLogEntry *entry, struct Mempool *pool)
 {
-	char *buf;
 	switch (entry->type) {
 	case PORTSCAN_LOG_ENTRY_UNKNOWN_VAR:
-		buf = str_printf("%-7c %-40s %s\n", 'V', entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7c %-40s %s\n", 'V', entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_UNKNOWN_TARGET:
-		buf = str_printf("%-7c %-40s %s\n", 'T', entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7c %-40s %s\n", 'T', entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_DUPLICATE_VAR:
-		buf = str_printf("%-7s %-40s %s\n", "Vc", entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7s %-40s %s\n", "Vc", entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_OPTION_DEFAULT_DESCRIPTION:
-		buf = str_printf("%-7s %-40s %s\n", "OD", entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7s %-40s %s\n", "OD", entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_OPTION_GROUP:
-		buf = str_printf("%-7s %-40s %s\n", "OG", entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7s %-40s %s\n", "OG", entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_OPTION:
-		buf = str_printf("%-7c %-40s %s\n", 'O', entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7c %-40s %s\n", 'O', entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_CATEGORY_NONEXISTENT_PORT:
-		buf = str_printf("%-7s %-40s %s\n", "Ce", entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7s %-40s %s\n", "Ce", entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_CATEGORY_UNHOOKED_PORT:
-		buf = str_printf("%-7s %-40s %s\n", "Cu", entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7s %-40s %s\n", "Cu", entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_CATEGORY_UNSORTED:
-		buf = str_printf("%-7c %-40s %s\n", 'C', entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7c %-40s %s\n", 'C', entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_ERROR:
-		buf = str_printf("%-7c %-40s %s\n", 'E', entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7c %-40s %s\n", 'E', entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_VARIABLE_VALUE:
-		buf = str_printf("%-7s %-40s %s\n", "Vv", entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7s %-40s %s\n", "Vv", entry->origin, entry->value);
 	case PORTSCAN_LOG_ENTRY_COMMENT:
-		buf = str_printf("%-7c %-40s %s\n", '#', entry->origin, entry->value);
-		break;
+		return str_printf(pool, "%-7c %-40s %s\n", '#', entry->origin, entry->value);
 	default:
 		abort();
 	}
 
-	return buf;
+	return NULL;
 }
 
 void
@@ -178,22 +162,21 @@ portscan_log_add_entries(struct PortscanLog *log, enum PortscanLogEntryType type
 	SET_FOREACH (values, const char *, value) {
 		portscan_log_add_entry(log, type, origin, value);
 	}
-	set_free(values);
 }
 
 void
 portscan_log_add_entry(struct PortscanLog *log, enum PortscanLogEntryType type, const char *origin, const char *value)
 {
-	struct PortscanLogEntry *entry = xmalloc(sizeof(struct PortscanLogEntry));
+	struct PortscanLogEntry *entry = mempool_alloc(log->pool, sizeof(struct PortscanLogEntry));
 	entry->type = type;
 	entry->index = array_len(log->entries);
-	entry->origin = xstrdup(origin);
-	entry->value = xstrdup(value);
+	entry->origin = str_dup(log->pool, origin);
+	entry->value = str_dup(log->pool, value);
 	array_append(log->entries, entry);
 }
 
 struct PortscanLogEntry *
-log_entry_parse(const char *s)
+log_entry_parse(struct Mempool *pool, const char *s)
 {
 	enum PortscanLogEntryType type = PORTSCAN_LOG_ENTRY_UNKNOWN_VAR;
 	if (str_startswith(s, "V ")) {
@@ -253,20 +236,15 @@ log_entry_parse(const char *s)
 		value_len--;
 	}
 
-	char *origin = xstrndup(origin_start, s - origin_start);
-	char *entry_value = xstrndup(value, value_len);
-
-	if (strlen(origin) == 0 || strlen(entry_value) == 0) {
+	if ((s - origin_start) == 0 || value_len == 0) {
 		fprintf(stderr, "unable to parse log entry: %s\n", s);
-		free(origin);
-		free(entry_value);
 		return NULL;
 	}
 
-	struct PortscanLogEntry *e = xmalloc(sizeof(struct PortscanLogEntry));
+	struct PortscanLogEntry *e = mempool_alloc(pool, sizeof(struct PortscanLogEntry));
 	e->type = type;
-	e->origin = origin;
-	e->value = entry_value;
+	e->origin = str_ndup(pool, origin_start, s - origin_start);
+	e->value = str_ndup(pool, value, value_len);
 	return e;
 }
 
@@ -293,23 +271,22 @@ log_entry_compare(const void *ap, const void *bp, void *userdata)
 int
 portscan_log_compare(struct PortscanLog *prev, struct PortscanLog *log)
 {
+	SCOPE_MEMPOOL(pool);
+
 	portscan_log_sort(prev);
 	portscan_log_sort(log);
 
-	struct diff p;
-	int rc = array_diff(prev->entries, log->entries, &p, log_entry_compare, NULL);
-	if (rc <= 0) {
+	struct diff *p = array_diff(prev->entries, log->entries, pool, log_entry_compare, NULL);
+	if (p == NULL) {
 		errx(1, "array_diff failed");
 	}
 	int equal = 1;
-	for (size_t i = 0; i < p.sessz; i++) {
-		if (p.ses[i].type != DIFF_COMMON) {
+	for (size_t i = 0; i < p->sessz; i++) {
+		if (p->ses[i].type != DIFF_COMMON) {
 			equal = 0;
 			break;
 		}
 	}
-	free(p.ses);
-	free(p.lcs);
 
 	return equal;
 }
@@ -317,15 +294,15 @@ portscan_log_compare(struct PortscanLog *prev, struct PortscanLog *log)
 int
 portscan_log_serialize_to_file(struct PortscanLog *log, FILE *out)
 {
+	SCOPE_MEMPOOL(pool);
+
 	portscan_log_sort(log);
 
 	ARRAY_FOREACH(log->entries, struct PortscanLogEntry *, entry) {
-		char *line = log_entry_tostring(entry);
+		char *line = log_entry_tostring(entry, pool);
 		if (write(fileno(out), line, strlen(line)) == -1) {
-			free(line);
 			return 0;
 		}
-		free(line);
 	}
 
 	return 1;
@@ -341,6 +318,7 @@ log_open(struct PortscanLogDir *logdir, const char *log_path)
 
 	FILE *f = fdopen(outfd, "w");
 	if (f == NULL) {
+		close(outfd);
 		return NULL;
 	}
 
@@ -350,21 +328,20 @@ log_open(struct PortscanLogDir *logdir, const char *log_path)
 int
 log_update_latest(struct PortscanLogDir *logdir, const char *log_path)
 {
+	SCOPE_MEMPOOL(pool);
+
 	char *prev = NULL;
-	if (!update_symlink(logdir->fd, log_path, PORTSCAN_LOG_LATEST, &prev)) {
-		free(prev);
+	if (!update_symlink(logdir->fd, log_path, PORTSCAN_LOG_LATEST, pool, &prev)) {
 		return 0;
 	}
-	if (prev != NULL && !update_symlink(logdir->fd, prev, PORTSCAN_LOG_PREVIOUS, NULL)) {
-		free(prev);
+	if (prev != NULL && !update_symlink(logdir->fd, prev, PORTSCAN_LOG_PREVIOUS, pool, NULL)) {
 		return 0;
 	}
-	free(prev);
 	return 1;
 }
 
 char *
-log_filename(const char *commit)
+log_filename(const char *commit, struct Mempool *pool)
 {
 	time_t date = time(NULL);
 	if (date == -1) {
@@ -377,34 +354,29 @@ log_filename(const char *commit)
 		return NULL;
 	}
 
-	char *log_path = str_printf("%s-%s.log", buf, commit);
-
-	return log_path;
+	return str_printf(pool, "%s-%s.log", buf, commit);
 }
 
 int
 portscan_log_serialize_to_dir(struct PortscanLog *log, struct PortscanLogDir *logdir)
 {
-	char *log_path = log_filename(logdir->commit);
-	FILE *out = log_open(logdir, log_path);
+	SCOPE_MEMPOOL(pool);
+
+	char *log_path = log_filename(logdir->commit, pool);
+	FILE *out = mempool_add(pool, log_open(logdir, log_path), fclose);
 	if (out == NULL) {
-		free(log_path);
 		return 0;
 	}
 	if (!portscan_log_serialize_to_file(log, out) ||
 	    !log_update_latest(logdir, log_path)) {
-		fclose(out);
-		free(log_path);
 		return 0;
 	}
 
-	fclose(out);
-	free(log_path);
 	return 1;
 }
 
 char *
-log_commit(int portsdir)
+log_commit(int portsdir, struct Mempool *pool)
 {
 	if (fchdir(portsdir) == -1) {
 		err(1, "fchdir");
@@ -423,20 +395,22 @@ log_commit(int portsdir)
 		if (linelen > 0 && line[linelen - 1] == '\n') {
 			line[linelen - 1] = 0;
 		}
-		revision = str_printf("%s", line);
+		revision = str_printf(pool, "%s", line);
 	}
 	free(line);
 	pclose(fp);
 
 	if (revision == NULL) {
-		revision = xstrdup("unknown");
+		revision = str_dup(pool, "unknown");
 	}
 	return revision;
 }
 
 struct PortscanLogDir *
-portscan_log_dir_open(const char *logdir_path, int portsdir)
+portscan_log_dir_open(struct Mempool *extpool, const char *logdir_path, int portsdir)
 {
+	SCOPE_MEMPOOL(pool);
+
 	int created_dir = 0;
 	int logdir;
 	while ((logdir = open(logdir_path, O_DIRECTORY)) == -1) {
@@ -451,25 +425,23 @@ portscan_log_dir_open(const char *logdir_path, int portsdir)
 	}
 	if (created_dir) {
 		if (symlinkat(PORTSCAN_LOG_INIT, logdir, PORTSCAN_LOG_PREVIOUS) == -1) {
-			return NULL;
+			goto error;
 		}
 		if (symlinkat(PORTSCAN_LOG_INIT, logdir, PORTSCAN_LOG_LATEST) == -1) {
-			return NULL;
+			goto error;
 		}
 	} else {
-		char *prev = read_symlink(logdir, PORTSCAN_LOG_PREVIOUS);
+		char *prev = read_symlink(logdir, PORTSCAN_LOG_PREVIOUS, pool);
 		if (prev == NULL &&
 		    symlinkat(PORTSCAN_LOG_INIT, logdir, PORTSCAN_LOG_PREVIOUS) == -1) {
-			return NULL;
+			goto error;
 		}
-		free(prev);
 
-		char *latest = read_symlink(logdir, PORTSCAN_LOG_LATEST);
+		char *latest = read_symlink(logdir, PORTSCAN_LOG_LATEST, pool);
 		if (latest == NULL &&
 		    symlinkat(PORTSCAN_LOG_INIT, logdir, PORTSCAN_LOG_LATEST) == -1) {
-			return NULL;
+			goto error;
 		}
-		free(latest);
 	}
 
 #if HAVE_CAPSICUM
@@ -479,10 +451,14 @@ portscan_log_dir_open(const char *logdir_path, int portsdir)
 #endif
 	struct PortscanLogDir *dir = xmalloc(sizeof(struct PortscanLogDir));
 	dir->fd = logdir;
-	dir->path = xstrdup(logdir_path);
-	dir->commit = log_commit(portsdir);
+	dir->path = str_dup(NULL, logdir_path);
+	dir->commit = str_dup(NULL, log_commit(portsdir, pool));
 
-	return dir;
+	return mempool_add(extpool, dir, portscan_log_dir_close);
+
+error:
+	close(logdir);
+	return NULL;
 }
 
 void
@@ -498,11 +474,13 @@ portscan_log_dir_close(struct PortscanLogDir *dir)
 }
 
 struct PortscanLog *
-portscan_log_read_all(struct PortscanLogDir *logdir, const char *log_path)
+portscan_log_read_all(struct Mempool *extpool, struct PortscanLogDir *logdir, const char *log_path)
 {
-	struct PortscanLog *log = portscan_log_new();
+	SCOPE_MEMPOOL(pool);
 
-	char *buf = read_symlink(logdir->fd, log_path);
+	struct PortscanLog *log = portscan_log_new(extpool);
+
+	char *buf = read_symlink(logdir->fd, log_path, pool);
 	if (buf == NULL) {
 		if (errno == ENOENT) {
 			return log;
@@ -510,12 +488,10 @@ portscan_log_read_all(struct PortscanLogDir *logdir, const char *log_path)
 			err(1, "read_symlink: %s", log_path);
 		}
 	} else if (strcmp(buf, PORTSCAN_LOG_INIT) == 0) {
-		free(buf);
 		return log;
 	}
-	free(buf);
 
-	int fd = openat(logdir->fd, log_path, O_RDONLY);
+	int fd = mempool_takefd(pool, openat(logdir->fd, log_path, O_RDONLY));
 	if (fd == -1) {
 		if (errno == ENOENT) {
 			return log;
@@ -523,9 +499,8 @@ portscan_log_read_all(struct PortscanLogDir *logdir, const char *log_path)
 		err(1, "openat: %s", log_path);
 	}
 
-	FILE *fp = fdopen(fd, "r");
+	FILE *fp = mempool_add(pool, fdopen(fd, "r"), fclose);
 	if (fp == NULL) {
-		close(fd);
 		return log;
 	}
 
@@ -533,13 +508,12 @@ portscan_log_read_all(struct PortscanLogDir *logdir, const char *log_path)
 	size_t linecap = 0;
 	char *line = NULL;
 	while ((linelen = getline(&line, &linecap, fp)) > 0) {
-		struct PortscanLogEntry *entry = log_entry_parse(line);
+		struct PortscanLogEntry *entry = log_entry_parse(log->pool, line);
 		if (entry != NULL) {
 			array_append(log->entries, entry);
 		}
 	}
 	free(line);
-	fclose(fp);
 
 	portscan_log_sort(log);
 

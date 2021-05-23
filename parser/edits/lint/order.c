@@ -72,14 +72,24 @@ static int output_diff(struct Parser *, struct Array *, struct Array *, int);
 static void output_row(struct Parser *, struct Row *, size_t);
 
 static void
-row(struct Mempool *pool, struct Array *output, char *name, char *hint)
+row_free(struct Row *row)
+{
+	if (row) {
+		free(row->name);
+		free(row->hint);
+		free(row);
+	}
+}
+
+static void
+row(struct Mempool *pool, struct Array *output, const char *name, const char *hint)
 {
 	struct Row *row = xmalloc(sizeof(struct Row));
-	row->name = name;
-	row->hint = hint;
-	mempool_add(pool, row, free);
-	mempool_add(pool, name, free);
-	mempool_add(pool, hint, free);
+	row->name = str_dup(NULL, name);
+	if (hint) {
+		row->hint = str_dup(NULL, hint);
+	}
+	mempool_add(pool, row, row_free);
 	array_append(output, row);
 }
 
@@ -89,15 +99,6 @@ row_compare(const void *ap, const void *bp, void *userdata)
 	struct Row *a = *(struct Row **)ap;
 	struct Row *b = *(struct Row **)bp;
 	return strcmp(a->name, b->name);
-}
-
-static void
-row_free(struct Row *row)
-{
-	if (row) {
-		free(row->name);
-		free(row->hint);
-	}
 }
 
 static enum SkipDeveloperState
@@ -177,14 +178,14 @@ get_all_unknown_variables_row_compare(const void *ap, const void *bp, void *user
 }
 
 static void
-get_all_unknown_variables_helper(const char *key, const char *val, const char *hint, void *userdata)
+get_all_unknown_variables_helper(struct Mempool *extpool, const char *key, const char *val, const char *hint, void *userdata)
 {
 	struct Set *unknowns = userdata;
 	struct Row rowkey = { .name = (char *)key, .hint = (char *)hint };
 	if (key && hint && !set_contains(unknowns, &rowkey)) {
 		struct Row *row = xmalloc(sizeof(struct Row));
-		row->name = xstrdup(key);
-		row->hint = xstrdup(hint);
+		row->name = str_dup(NULL, key);
+		row->hint = str_dup(NULL, hint);
 		set_add(unknowns, row);
 	}
 }
@@ -200,34 +201,29 @@ get_all_unknown_variables(struct Mempool *pool, struct Parser *parser)
 {
 	struct Set *unknowns = mempool_set(pool, get_all_unknown_variables_row_compare, NULL, row_free);
 	struct ParserEditOutput param = { get_all_unknown_variables_filter, NULL, NULL, NULL, get_all_unknown_variables_helper, unknowns, 0 };
-	if (parser_edit(parser, output_unknown_variables, &param) != PARSER_ERROR_OK) {
+	if (parser_edit(parser, pool, output_unknown_variables, &param) != PARSER_ERROR_OK) {
 		return unknowns;
 	}
 	return unknowns;
 }
 
 static char *
-get_hint(struct Parser *parser, const char *var, enum BlockType block, struct Set *uses_candidates)
+get_hint(struct Mempool *pool, struct Parser *parser, const char *var, enum BlockType block, struct Set *uses_candidates)
 {
 	char *hint = NULL;
-
 	if (uses_candidates) {
-		struct Array *uses = set_values(uses_candidates);
-		char *buf = str_join(uses, " ");
-		array_free(uses);
+		struct Array *uses = mempool_add(pool, set_values(uses_candidates), array_free);
+		char *buf = str_join(pool, uses, " ");
 		if (set_len(uses_candidates) > 1) {
-			hint = str_printf("missing one of USES=%s ?", buf);
+			hint = str_printf(pool, "missing one of USES=%s ?", buf);
 		} else {
-			hint = str_printf("missing USES=%s ?", buf);
+			hint = str_printf(pool, "missing USES=%s ?", buf);
 		}
-		free(buf);
-		set_free(uses_candidates);
 	} else if (block == BLOCK_UNKNOWN) {
-		char *uppervar = str_map(var, strlen(var), toupper);
+		char *uppervar = str_map(pool, var, strlen(var), toupper);
 		if (variable_order_block(parser, uppervar, NULL) != BLOCK_UNKNOWN) {
-			hint = str_printf("did you mean %s ?", uppervar);
+			hint = str_printf(pool, "did you mean %s ?", uppervar);
 		}
-		free(uppervar);
 	}
 
 	return hint;
@@ -247,13 +243,13 @@ variable_list(struct Mempool *pool, struct Parser *parser, struct Array *tokens)
 		block = variable_order_block(parser, var, &uses_candidates);
 		if (block != last_block) {
 			if (flag && block != last_block) {
-				row(pool, output, xstrdup(""), NULL);
+				row(pool, output, "", NULL);
 			}
-			row(pool, output, str_printf("# %s", blocktype_tostring(block)), NULL);
+			row(pool, output, str_printf(pool, "# %s", blocktype_tostring(block)), NULL);
 		}
 		flag = 1;
-		char *hint = get_hint(parser, var, block, uses_candidates);
-		row(pool, output, xstrdup(var), hint);
+		char *hint = get_hint(pool, parser, var, block, uses_candidates);
+		row(pool, output, var, hint);
 		last_block = block;
 	}
 
@@ -302,12 +298,12 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 		if ((block = variable_order_block(parser, var, &uses_candidates)) != BLOCK_UNKNOWN) {
 			if (block != last_block) {
 				if (flag && block != last_block) {
-					row(pool, target, xstrdup(""), NULL);
+					row(pool, target, "", NULL);
 				}
-				row(pool, target, str_printf("# %s", blocktype_tostring(block)), NULL);
+				row(pool, target, str_printf(pool, "# %s", blocktype_tostring(block)), NULL);
 			}
 			flag = 1;
-			row(pool, target, xstrdup(var), NULL);
+			row(pool, target, var, NULL);
 			last_block = block;
 		} else {
 			array_append(unknowns, var);
@@ -324,31 +320,31 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 	}
 
 	if (array_len(vars) > 0 && (array_len(unknowns) > 0 || set_len(all_unknown_variables) > 0)) {
-		row(pool, target, xstrdup(""), NULL);
-		row(pool, target, str_printf("# %s", blocktype_tostring(BLOCK_UNKNOWN)), NULL);
-		row(pool, target, xstrdup("# WARNING:"), NULL);
-		row(pool, target, xstrdup("# Portclippy did not recognize the following variables."), NULL);
-		row(pool, target, xstrdup("# They could be local variables only, misspellings of"), NULL);
-		row(pool, target, xstrdup("# framework variables, or Portclippy needs to be made aware"), NULL);
-		row(pool, target, xstrdup("# of them.  Please double check them."), NULL);
-		row(pool, target, xstrdup("#"), NULL);
-		row(pool, target, xstrdup("# Prefix them with an _ to tell Portclippy to ignore them."), NULL);
-		row(pool, target, xstrdup("# This is also an important signal for other contributors"), NULL);
-		row(pool, target, xstrdup("# who are working on your port.  It removes any doubt of"), NULL);
-		row(pool, target, xstrdup("# whether they are framework variables or not and whether"), NULL);
-		row(pool, target, xstrdup("# they are safe to remove/rename or not."), NULL);
+		row(pool, target, "", NULL);
+		row(pool, target, str_printf(pool, "# %s", blocktype_tostring(BLOCK_UNKNOWN)), NULL);
+		row(pool, target, "# WARNING:", NULL);
+		row(pool, target, "# Portclippy did not recognize the following variables.", NULL);
+		row(pool, target, "# They could be local variables only, misspellings of", NULL);
+		row(pool, target, "# framework variables, or Portclippy needs to be made aware", NULL);
+		row(pool, target, "# of them.  Please double check them.", NULL);
+		row(pool, target, "#", NULL);
+		row(pool, target, "# Prefix them with an _ to tell Portclippy to ignore them.", NULL);
+		row(pool, target, "# This is also an important signal for other contributors", NULL);
+		row(pool, target, "# who are working on your port.  It removes any doubt of", NULL);
+		row(pool, target, "# whether they are framework variables or not and whether", NULL);
+		row(pool, target, "# they are safe to remove/rename or not.", NULL);
 	}
 	ARRAY_FOREACH(unknowns, char *, var) {
 		struct Set *uses_candidates = NULL;
 		enum BlockType block = variable_order_block(parser, var, &uses_candidates);
-		char *hint = get_hint(parser, var, block, uses_candidates);
-		row(pool, target, xstrdup(var), hint);
+		char *hint = get_hint(pool, parser, var, block, uses_candidates);
+		row(pool, target, var, hint);
 	}
 
 	int retval = output_diff(parser, origin, target, no_color);
 
 	if (array_len(vars) > 0 && set_len(all_unknown_variables) > 0) {
-		struct Map *group = map_new(str_compare, NULL, NULL, NULL);
+		struct Map *group = mempool_map(pool, str_compare, NULL, NULL, NULL);
 		size_t maxlen = 0;
 		SET_FOREACH(all_unknown_variables, struct Row *, var) {
 			struct Array *hints = map_get(group, var->name);
@@ -358,7 +354,7 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 				map_add(group, var->name, hints);
 			}
 			if (var->hint) {
-				array_append(hints, mempool_add(pool, str_printf("in %s", var->hint), free));
+				array_append(hints, str_printf(pool, "in %s", var->hint));
 			}
 		}
 		parser_enqueue_output(parser, "\n");
@@ -374,16 +370,14 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 			variable_order_block(parser, name, &uses_candidates);
 			if (uses_candidates) {
 				struct Array *uses = set_values(uses_candidates);
-				char *buf = str_join(uses, " ");
+				char *buf = str_join(pool, uses, " ");
 				char *hint = NULL;
 				if (set_len(uses_candidates) > 1) {
-					hint = str_printf("missing one of USES=%s ?", buf);
+					hint = str_printf(pool, "missing one of USES=%s ?", buf);
 				} else {
-					hint = str_printf("missing USES=%s ?", buf);
+					hint = str_printf(pool, "missing USES=%s ?", buf);
 				}
-				free(buf);
 				set_free(uses_candidates);
-				mempool_add(pool, hint, free);
 				array_append(hints, hint);
 			}
 			if (array_len(hints) > 0) {
@@ -414,12 +408,12 @@ check_target_order(struct Parser *parser, struct Array *tokens, int no_color, in
 
 	struct Array *origin = mempool_array(pool);
 	if (status_var) {
-		row(pool, origin, xstrdup(""), NULL);
+		row(pool, origin, "", NULL);
 	}
-	row(pool, origin, xstrdup("# Out of order targets"), NULL);
+	row(pool, origin, "# Out of order targets", NULL);
 	ARRAY_FOREACH(targets, char *, name) {
 		if (is_known_target(parser, name)) {
-			row(pool, origin, str_printf("%s:", name), NULL);
+			row(pool, origin, str_printf(pool, "%s:", name), NULL);
 		}
 	}
 
@@ -427,19 +421,19 @@ check_target_order(struct Parser *parser, struct Array *tokens, int no_color, in
 
 	struct Array *target = mempool_array(pool);
 	if (status_var) {
-		row(pool, target, xstrdup(""), NULL);
+		row(pool, target, str_dup(NULL, ""), NULL);
 	}
-	row(pool, target, xstrdup("# Out of order targets"), NULL);
+	row(pool, target, "# Out of order targets", NULL);
 	ARRAY_FOREACH(targets, char *, name) {
 		if (is_known_target(parser, name)) {
-			row(pool, target, str_printf("%s:", name), NULL);
+			row(pool, target, str_printf(pool, "%s:", name), NULL);
 		}
 	}
 
 	struct Array *unknowns = mempool_array(pool);
 	ARRAY_FOREACH(targets, char *, name) {
 		if (!is_known_target(parser, name) && name[0] != '_') {
-			array_append(unknowns, mempool_add(pool, str_printf("%s:", name), free));
+			array_append(unknowns, str_printf(pool, "%s:", name));
 		}
 	}
 
@@ -473,12 +467,13 @@ check_target_order(struct Parser *parser, struct Array *tokens, int no_color, in
 static void
 output_row(struct Parser *parser, struct Row *row, size_t maxlen)
 {
+	SCOPE_MEMPOOL(pool);
+
 	parser_enqueue_output(parser, row->name);
 	if (row->hint && maxlen > 0) {
 		size_t len = maxlen - strlen(row->name);
-		char *spaces = str_repeat(" ", len + 4);
+		char *spaces = str_repeat(pool, " ", len + 4);
 		parser_enqueue_output(parser, spaces);
-		free(spaces);
 		parser_enqueue_output(parser, row->hint);
 	}
 	parser_enqueue_output(parser, "\n");
@@ -487,18 +482,16 @@ output_row(struct Parser *parser, struct Row *row, size_t maxlen)
 static int
 output_diff(struct Parser *parser, struct Array *origin, struct Array *target, int no_color)
 {
-	struct diff p;
-	int rc = array_diff(origin, target, &p, row_compare, NULL);
-	if (rc <= 0) {
+	SCOPE_MEMPOOL(pool);
+
+	struct diff *p = array_diff(origin, target, pool, row_compare, NULL);
+	if (p == NULL) {
 		return -1;
 	}
-	SCOPE_MEMPOOL(pool);
-	mempool_add(pool, p.ses, free);
-	mempool_add(pool, p.lcs, free);
 
 	size_t edits = 0;
-	for (size_t i = 0; i < p.sessz; i++) {
-		switch (p.ses[i].type) {
+	for (size_t i = 0; i < p->sessz; i++) {
+		switch (p->ses[i].type) {
 		case DIFF_ADD:
 		case DIFF_DELETE:
 			edits++;
@@ -518,13 +511,13 @@ output_diff(struct Parser *parser, struct Array *origin, struct Array *target, i
 		}
 	}
 
-	for (size_t i = 0; i < p.sessz; i++) {
-		struct Row *row = *(struct Row **)p.ses[i].e;
+	for (size_t i = 0; i < p->sessz; i++) {
+		struct Row *row = *(struct Row **)p->ses[i].e;
 		if (strlen(row->name) == 0) {
 			parser_enqueue_output(parser, "\n");
 			continue;
 		} else if (row->name[0] == '#') {
-			if (p.ses[i].type != DIFF_DELETE) {
+			if (p->ses[i].type != DIFF_DELETE) {
 				if (!no_color) {
 					parser_enqueue_output(parser, ANSI_COLOR_CYAN);
 				}
@@ -535,7 +528,7 @@ output_diff(struct Parser *parser, struct Array *origin, struct Array *target, i
 			}
 			continue;
 		}
-		switch (p.ses[i].type) {
+		switch (p->ses[i].type) {
 		case DIFF_ADD:
 			if (!no_color) {
 				parser_enqueue_output(parser, ANSI_COLOR_GREEN);
@@ -567,23 +560,20 @@ PARSER_EDIT(lint_order)
 	int *status = userdata;
 	struct ParserSettings settings = parser_settings(parser);
 	if (!(settings.behavior & PARSER_OUTPUT_RAWLINES)) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
-		*error_msg = str_printf("needs PARSER_OUTPUT_RAWLINES");
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, "needs PARSER_OUTPUT_RAWLINES");
 		return NULL;
 	}
 	int no_color = settings.behavior & PARSER_OUTPUT_NO_COLOR;
 
 	int status_var;
 	if ((status_var = check_variable_order(parser, ptokens, no_color)) == -1) {
-		*error = PARSER_ERROR_EDIT_FAILED;
-		*error_msg = xstrdup("lint_order: cannot compute difference");
+		parser_set_error(parser, PARSER_ERROR_EDIT_FAILED, "lint_order: cannot compute difference");
 		return NULL;
 	}
 
 	int status_target;
 	if ((status_target = check_target_order(parser, ptokens, no_color, status_var)) == -1) {
-		*error = PARSER_ERROR_EDIT_FAILED;
-		*error_msg = xstrdup("lint_order: cannot compute difference");
+		parser_set_error(parser, PARSER_ERROR_EDIT_FAILED, "lint_order: cannot compute difference");
 		return NULL;
 	}
 

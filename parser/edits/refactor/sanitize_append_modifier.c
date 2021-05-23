@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 
 #include "parser.h"
@@ -44,14 +45,16 @@
 
 PARSER_EDIT(refactor_sanitize_append_modifier)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (userdata != NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 
 	/* Sanitize += before bsd.options.mk */
-	struct Set *seen = set_new(variable_compare, NULL, NULL);
-	struct Array *tokens = array_new();
+	struct Set *seen = mempool_set(pool, variable_compare, NULL, NULL);
+	struct Array *tokens = mempool_array(pool);
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
 		switch (token_type(t)) {
 		case VARIABLE_START:
@@ -80,15 +83,12 @@ PARSER_EDIT(refactor_sanitize_append_modifier)
 			break;
 		} case CONDITIONAL_TOKEN:
 			if (is_include_bsd_port_mk(t)) {
-				goto end;
+				return NULL;
 			}
 		default:
 			break;
 		}
 	}
-end:
-	set_free(seen);
-	array_free(tokens);
 
 	return ptokens;
 }

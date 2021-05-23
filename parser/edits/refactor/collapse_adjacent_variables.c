@@ -33,6 +33,7 @@
 #include <stdio.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/set.h>
 #include <libias/util.h>
 
@@ -87,8 +88,10 @@ next_variable_has_eol_comment(struct Array *tokens, size_t i) {
 
 PARSER_EDIT(refactor_collapse_adjacent_variables)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (userdata != NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 
@@ -96,7 +99,7 @@ PARSER_EDIT(refactor_collapse_adjacent_variables)
 	struct Variable *last_var = NULL;
 	struct Token *last_end = NULL;
 	struct Token *last_token = NULL;
-	struct Set *ignored_tokens = set_new(NULL, NULL, NULL);
+	struct Set *ignored_tokens = mempool_set(pool, NULL, NULL, NULL);
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
 		switch (token_type(t)) {
 		case VARIABLE_START:
@@ -137,7 +140,6 @@ PARSER_EDIT(refactor_collapse_adjacent_variables)
 		}
 	}
 
-	set_free(ignored_tokens);
 	return tokens;
 }
 

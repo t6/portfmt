@@ -39,6 +39,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/str.h>
 
 #include "parser.h"
@@ -100,7 +101,7 @@ extract_git_describe_prefix(const char *ver)
 }
 
 static int
-is_git_describe_version(const char *ver, char **distversion, char **prefix, char **suffix)
+is_git_describe_version(struct Mempool *pool, const char *ver, char **distversion, char **prefix, char **suffix)
 {
 	ssize_t suffix_index;
 	if ((suffix_index = extract_git_describe_suffix(ver)) == -1) {
@@ -119,7 +120,7 @@ is_git_describe_version(const char *ver, char **distversion, char **prefix, char
 	ssize_t prefix_index;
 	if ((prefix_index = extract_git_describe_prefix(ver)) != -1) {
 		if (prefix != NULL) {
-			*prefix = xstrndup(ver, prefix_index + 1);
+			*prefix = str_ndup(pool, ver, prefix_index + 1);
 		}
 
 	} else {
@@ -129,11 +130,11 @@ is_git_describe_version(const char *ver, char **distversion, char **prefix, char
 	}
 
 	if (suffix != NULL) {
-		*suffix = xstrdup(ver + suffix_index);
+		*suffix = str_dup(pool, ver + suffix_index);
 	}
 
 	if (distversion != NULL) {
-		*distversion = str_substr(ver, prefix_index + 1, suffix_index);
+		*distversion = str_substr(pool, ver, prefix_index + 1, suffix_index);
 	}
 
 	return 1;
@@ -141,44 +142,40 @@ is_git_describe_version(const char *ver, char **distversion, char **prefix, char
 
 PARSER_EDIT(edit_set_version)
 {
+	SCOPE_MEMPOOL(pool);
+
 	const struct ParserEdit *params = userdata;
 	if (params == NULL ||
 	    params->subparser != NULL ||
 	    params->arg1 == NULL ||
 	    params->merge_behavior != PARSER_MERGE_DEFAULT) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
-		*error_msg = xstrdup("missing version");
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, "missing version");
 		return NULL;
 	}
-	char *newversion_buf = xstrdup(params->arg1);
-	const char *newversion = newversion_buf;
+
+	const char *newversion = str_dup(pool, params->arg1);
 
 	const char *ver = "DISTVERSION";
-	if (parser_lookup_variable(parser, "PORTVERSION", PARSER_LOOKUP_FIRST, NULL, NULL)) {
+	if (parser_lookup_variable(parser, "PORTVERSION", PARSER_LOOKUP_FIRST, pool, NULL, NULL)) {
 		ver = "PORTVERSION";
 	}
 
 	char *version;
 	int rev = 0;
 	int rev_opt = 0;
-	if (parser_lookup_variable_str(parser, ver, PARSER_LOOKUP_FIRST, &version, NULL)) {
+	if (parser_lookup_variable_str(parser, ver, PARSER_LOOKUP_FIRST, pool, &version, NULL)) {
 		char *revision;
 		struct Variable *rev_var;
 		if (strcmp(version, newversion) != 0 &&
-		    (rev_var = parser_lookup_variable_str(parser, "PORTREVISION", PARSER_LOOKUP_FIRST, &revision, NULL))) {
+		    (rev_var = parser_lookup_variable_str(parser, "PORTREVISION", PARSER_LOOKUP_FIRST, pool, &revision, NULL))) {
 			rev_opt = variable_modifier(rev_var) == MODIFIER_OPTIONAL;
 			const char *errstr = NULL;
 			rev = strtonum(revision, 0, INT_MAX, &errstr);
-			free(revision);
 			if (errstr != NULL) {
-				*error = PARSER_ERROR_EXPECTED_INT;
-				*error_msg = xstrdup(errstr);
-				free(version);
-				free(newversion_buf);
+				parser_set_error(parser, PARSER_ERROR_EXPECTED_INT, errstr);
 				return NULL;
 			}
 		}
-		free(version);
 	}
 
 	int remove_distversionprefix = 0;
@@ -186,21 +183,19 @@ PARSER_EDIT(edit_set_version)
 	char *distversion;
 	char *prefix;
 	char *suffix;
-	if (!is_git_describe_version(newversion, &distversion, &prefix, &suffix)) {
-		if (parser_lookup_variable_str(parser, "DISTVERSIONSUFFIX", PARSER_LOOKUP_FIRST, &suffix, NULL)) {
+	if (!is_git_describe_version(pool, newversion, &distversion, &prefix, &suffix)) {
+		if (parser_lookup_variable_str(parser, "DISTVERSIONSUFFIX", PARSER_LOOKUP_FIRST, pool, &suffix, NULL)) {
 			if (str_endswith(newversion, suffix)) {
-				newversion_buf[strlen(newversion) - strlen(suffix)] = 0;
+				newversion = str_ndup(pool, newversion, strlen(newversion) - strlen(suffix));
 			} else {
 				remove_distversionsuffix = 1;
 			}
-			free(suffix);
 			suffix = NULL;
 		}
-		if (parser_lookup_variable_str(parser, "DISTVERSIONPREFIX", PARSER_LOOKUP_FIRST, &prefix, NULL)) {
+		if (parser_lookup_variable_str(parser, "DISTVERSIONPREFIX", PARSER_LOOKUP_FIRST, pool, &prefix, NULL)) {
 			if (str_startswith(newversion, prefix)) {
 				newversion += strlen(prefix);
 			}
-			free(prefix);
 			prefix = NULL;
 		}
 	} else if (prefix == NULL) {
@@ -211,45 +206,23 @@ PARSER_EDIT(edit_set_version)
 	}
 
 	struct ParserSettings settings = parser_settings(parser);
-	struct Parser *subparser = parser_new(&settings);
+	struct Parser *subparser = parser_new(pool, &settings);
 
-	char *buf = NULL;
+	struct Array *script = mempool_array(pool);
 	if (suffix) {
-		buf = str_printf("DISTVERSIONSUFFIX=%s", suffix);
+		array_append(script, str_printf(pool, "DISTVERSIONSUFFIX=%s", suffix));
 	} else if (remove_distversionsuffix) {
-		buf = str_printf("DISTVERSIONSUFFIX!=");
-	}
-	if (buf) {
-		*error = parser_read_from_buffer(subparser, buf, strlen(buf));
-		if (*error != PARSER_ERROR_OK) {
-			goto cleanup;
-		}
-		free(buf);
-		buf = NULL;
+		array_append(script, str_printf(pool, "DISTVERSIONSUFFIX!="));
 	}
 
 	if (prefix) {
-		buf = str_printf("DISTVERSIONPREFIX=%s", prefix);
+		array_append(script, str_printf(pool, "DISTVERSIONPREFIX=%s", prefix));
 	} else if (remove_distversionprefix) {
-		buf = str_printf("DISTVERSIONPREFIX!=");
-	}
-	if (buf) {
-		*error = parser_read_from_buffer(subparser, buf, strlen(buf));
-		if (*error != PARSER_ERROR_OK) {
-			goto cleanup;
-		}
-		free(buf);
-		buf = NULL;
+		array_append(script, str_printf(pool, "DISTVERSIONPREFIX!="));
 	}
 
 	if (strcmp(ver, "DISTVERSION") == 0) {
-		buf = str_printf("PORTVERSION!=");
-		*error = parser_read_from_buffer(subparser, buf, strlen(buf));
-		if (*error != PARSER_ERROR_OK) {
-			goto cleanup;
-		}
-		free(buf);
-		buf = NULL;
+		array_append(script, str_printf(pool, "PORTVERSION!="));
 	}
 
 	if (distversion) {
@@ -259,35 +232,28 @@ PARSER_EDIT(edit_set_version)
 	if (rev > 0) {
 		if (rev_opt) {
 			// Reset PORTREVISION?= to 0
-			buf = str_printf("%s=%s\nPORTREVISION=0", ver, newversion);
+			array_append(script, str_printf(pool, "%s=%s\nPORTREVISION=0", ver, newversion));
 		} else {
 			// Remove PORTREVISION
-			buf = str_printf("%s=%s\nPORTREVISION!=", ver, newversion);
+			array_append(script, str_printf(pool, "%s=%s\nPORTREVISION!=", ver, newversion));
 		}
 	} else {
-		buf = str_printf("%s=%s", ver, newversion);
-	}
-	*error = parser_read_from_buffer(subparser, buf, strlen(buf));
-	if (*error != PARSER_ERROR_OK) {
-		goto cleanup;
+		array_append(script, str_printf(pool, "%s=%s", ver, newversion));
 	}
 
-	*error = parser_read_finish(subparser);
-	if (*error != PARSER_ERROR_OK) {
-		goto cleanup;
+	char *script_buf = str_join(pool, script, "\n");
+	enum ParserError error = parser_read_from_buffer(subparser, script_buf, strlen(script_buf));
+	if (error != PARSER_ERROR_OK) {
+		return NULL;
 	}
-	*error = parser_merge(parser, subparser, params->merge_behavior | PARSER_MERGE_SHELL_IS_DELETE);
-	if (*error != PARSER_ERROR_OK) {
-		goto cleanup;
+	error = parser_read_finish(subparser);
+	if (error != PARSER_ERROR_OK) {
+		return NULL;
 	}
-
-cleanup:
-	parser_free(subparser);
-	free(buf);
-	free(prefix);
-	free(distversion);
-	free(suffix);
-	free(newversion_buf);
+	error = parser_merge(parser, subparser, params->merge_behavior | PARSER_MERGE_SHELL_IS_DELETE);
+	if (error != PARSER_ERROR_OK) {
+		return NULL;
+	}
 
 	return NULL;
 }

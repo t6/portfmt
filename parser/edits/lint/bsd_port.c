@@ -53,8 +53,7 @@ PARSER_EDIT(lint_bsd_port)
 		}
 	}
 	if (invalid) {
-		*error = PARSER_ERROR_EDIT_FAILED;
-		*error_msg = xstrdup("not a FreeBSD Ports Makefile");
+		parser_set_error(parser, PARSER_ERROR_EDIT_FAILED, "not a FreeBSD Ports Makefile");
 	}
 	return NULL;
 }

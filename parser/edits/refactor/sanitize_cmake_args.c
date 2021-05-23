@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include <libias/array.h>
+#include <libias/mempool.h>
 #include <libias/str.h>
 
 #include "parser.h"
@@ -51,8 +52,10 @@ enum State {
 
 PARSER_EDIT(refactor_sanitize_cmake_args)
 {
+	SCOPE_MEMPOOL(pool);
+
 	if (userdata != NULL) {
-		*error = PARSER_ERROR_INVALID_ARGUMENT;
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, NULL);
 		return NULL;
 	}
 
@@ -63,14 +66,13 @@ PARSER_EDIT(refactor_sanitize_cmake_args)
 		case VARIABLE_START: {
 			char *name = variable_name(token_variable(t));
 			char *helper = NULL;
-			if (is_options_helper(parser, name, NULL, &helper, NULL)) {
+			if (is_options_helper(pool, parser, name, NULL, &helper, NULL)) {
 				if (strcmp(helper, "CMAKE_ON") == 0 || strcmp(helper, "CMAKE_OFF") == 0 ||
 				    strcmp(helper, "MESON_ON") == 0 || strcmp(helper, "MESON_OFF") == 0) {
 					state = CMAKE_ARGS;
 				} else {
 					state = NONE;
 				}
-				free(helper);
 			} else if (strcmp(name, "CMAKE_ARGS") == 0 || strcmp(name, "MESON_ARGS") == 0) {
 				state = CMAKE_ARGS;
 			} else {
@@ -85,9 +87,7 @@ PARSER_EDIT(refactor_sanitize_cmake_args)
 				state = CMAKE_D;
 				parser_mark_for_gc(parser, t);
 			} else if (state == CMAKE_D) {
-				char *buf = str_printf("-D%s", token_data(t));
-				struct Token *newt = token_clone(t, buf);
-				free(buf);
+				struct Token *newt = token_clone(t, str_printf(pool, "-D%s", token_data(t)));
 				array_append(tokens, newt);
 				parser_mark_for_gc(parser, t);
 				state = CMAKE_ARGS;

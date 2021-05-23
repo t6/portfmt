@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <libias/mempool.h>
 #include <libias/str.h>
 #include <libias/util.h>
 
@@ -48,31 +49,25 @@ struct Conditional {
 struct Conditional *
 conditional_new(char *s)
 {
+	SCOPE_MEMPOOL(pool);
 
-	struct Regexp *re = regexp_new(regex(RE_CONDITIONAL));
+	struct Regexp *re = regexp_new(pool, regex(RE_CONDITIONAL));
 	if (regexp_exec(re, s) != 0) {
-		regexp_free(re);
 		return NULL;
 	}
 
-	char *tmp = regexp_substr(re, 0);
-	regexp_free(re);
-	re = NULL;
+	char *tmp = regexp_substr(re, pool, 0);
 	if (strlen(tmp) < 2) {
-		free(tmp);
 		return NULL;
 	}
 
 	char *type;
 	if (tmp[0] == '.') {
-		char *tmp2 = str_trim(tmp + 1);
-		type = str_printf(".%s", tmp2);
-		free(tmp2);
+		char *tmp2 = str_trim(pool, tmp + 1);
+		type = str_printf(pool, ".%s", tmp2);
 	} else {
-		type = str_trim(tmp);
+		type = str_trim(pool, tmp);
 	}
-	free(tmp);
-	tmp = NULL;
 
 	enum ConditionalType cond_type;
 	if (strcmp(type, "include") == 0) {
@@ -130,10 +125,8 @@ conditional_new(char *s)
 	} else if (strcmp(type, ".sinclude") == 0 || strcmp(type, ".-include") == 0) {
 		cond_type = COND_SINCLUDE;
 	} else {
-		free(type);
 		return NULL;
 	}
-	free(type);
 
 	struct Conditional *cond = xmalloc(sizeof(struct Conditional));
 	cond->type = cond_type;
@@ -156,7 +149,7 @@ conditional_free(struct Conditional *cond)
 }
 
 char *
-conditional_tostring(struct Conditional *cond)
+conditional_tostring(struct Conditional *cond, struct Mempool *pool)
 {
 	const char *type = NULL;
 
@@ -242,7 +235,7 @@ conditional_tostring(struct Conditional *cond)
 	}
 	assert(type != NULL);
 
-	return xstrdup(type);
+	return str_dup(pool, type);
 }
 
 enum ConditionalType
