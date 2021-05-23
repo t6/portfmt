@@ -44,3 +44,9 @@ static const char *known_architectures_[] = {
 	"riscv64sf",
 	"sparc64",
 };
+static int freebsd_versions_[] = {
+	11,
+	12,
+	13,
+	14,
+};

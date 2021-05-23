@@ -134,7 +134,7 @@ skip_developer_only(enum SkipDeveloperState state, struct Token *t)
 }
 
 static struct Array *
-get_variables(struct Mempool *pool, struct Array *tokens)
+get_variables(struct Mempool *pool, struct Parser *parser, struct Array *tokens)
 {
 	struct Array *vars = mempool_array(pool);
 	enum SkipDeveloperState developer_only = SKIP_DEVELOPER_INIT;
@@ -149,7 +149,8 @@ get_variables(struct Mempool *pool, struct Array *tokens)
 		}
 		char *var = variable_name(token_variable(t));
 		// Ignore port local variables that start with an _
-		if (var[0] != '_' && array_find(vars, var, str_compare, NULL) == -1) {
+		if (var[0] != '_' && array_find(vars, var, str_compare, NULL) == -1 &&
+		    !is_declarative_arch_specfic_var(parser, var)) {
 			array_append(vars, var);
 		}
 	}
@@ -236,7 +237,7 @@ static struct Array *
 variable_list(struct Mempool *pool, struct Parser *parser, struct Array *tokens)
 {
 	struct Array *output = mempool_array(pool);
-	struct Array *vars = get_variables(pool, tokens);
+	struct Array *vars = get_variables(pool, parser, tokens);
 
 	enum BlockType block = BLOCK_UNKNOWN;
 	enum BlockType last_block = BLOCK_UNKNOWN;
@@ -288,7 +289,7 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 	SCOPE_MEMPOOL(pool);
 	struct Array *origin = variable_list(pool, parser, tokens);
 
-	struct Array *vars = get_variables(pool, tokens);
+	struct Array *vars = get_variables(pool, parser, tokens);
 	array_sort(vars, compare_order, parser);
 
 	struct Set *uses_candidates = NULL;

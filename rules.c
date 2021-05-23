@@ -86,6 +86,7 @@ static struct {
 };
 
 #include "generated_rules.h"
+#include "parser/constants.h"
 
 static const char *license_perms_rel[] = {
 	"dist-mirror",
@@ -1266,6 +1267,67 @@ variable_has_flag(struct Parser *parser, const char *var, int flag)
 		}
 	}
 
+	return 0;
+}
+
+static int
+extract_arch_prefix(const char *var, char **prefix_without_arch, char **prefix_without_arch_osrel)
+{
+	SCOPE_MEMPOOL(pool);
+	for (size_t i = 0; i < nitems(known_architectures_); i++) {
+		char *suffix = mempool_add(pool, str_printf("_%s", known_architectures_[i]), free);
+		if (str_endswith(var, suffix)) {
+			*prefix_without_arch = xstrndup(var, strlen(var) - strlen(suffix));
+			*prefix_without_arch_osrel = NULL;
+			return 1;
+		}
+	}
+	for (size_t i = 0; i < nitems(known_architectures_); i++) {
+		for (size_t j = 0; j < nitems(freebsd_versions_); j++) {
+			char *suffix = mempool_add(pool, str_printf("_%s_%d", known_architectures_[i], freebsd_versions_[j]), free);
+			if (str_endswith(var, suffix)) {
+				*prefix_without_arch = xstrndup(var, strlen(var) - strlen(suffix));
+				*prefix_without_arch_osrel = xstrndup(var, strlen(var) - strlen(suffix) + strlen(known_architectures_[i]) + 1);
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+static int
+is_declarative_arch_specfic_var_lookup(struct Mempool *pool, struct Parser *parser, const char *var, struct Array **tokens)
+{
+	*tokens = NULL;
+	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_FIRST, tokens, NULL) ||
+	    (*var == '_' && parser_lookup_variable(parser, var + 1, PARSER_LOOKUP_FIRST, tokens, NULL))) {
+		mempool_add(pool, *tokens, array_free);
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+int
+is_declarative_arch_specfic_var(struct Parser *parser, const char *var)
+{
+	SCOPE_MEMPOOL(pool);
+	char *prefix = NULL;
+	char *prefix_without_osrel = NULL;
+	if (extract_arch_prefix(var, &prefix, &prefix_without_osrel)) {
+		mempool_add_multi(pool, free, prefix, prefix_without_osrel, NULL);
+		struct Array *tokens = NULL;
+		if (is_declarative_arch_specfic_var_lookup(pool, parser, prefix, &tokens)) {
+			if (array_find(tokens, mempool_add(pool, str_printf("${%s_${ARCH}}", prefix), free), str_compare, NULL) != -1) {
+				return 1;
+			}
+		}
+		if (prefix_without_osrel && is_declarative_arch_specfic_var_lookup(pool, parser, prefix_without_osrel, &tokens)) {
+			if (array_find(tokens, mempool_add(pool, str_printf("${%s_${ARCH}_${OSREL:R}}", prefix), free), str_compare, NULL) != -1) {
+				return 1;
+			}
+		}
+	}
 	return 0;
 }
 
