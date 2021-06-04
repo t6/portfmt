@@ -1316,6 +1316,8 @@ is_declarative_var(struct Parser *parser, const char *var)
 	char *prefix = NULL;
 	char *prefix_without_osrel = NULL;
 	if (extract_arch_prefix(var, &prefix, &prefix_without_osrel)) {
+		mempool_take(pool, prefix);
+		mempool_take(pool, prefix_without_osrel);
 		struct Array *tokens = NULL;
 		if (is_declarative_var_lookup(pool, parser, prefix, &tokens)) {
 			if (array_find(tokens, mempool_add(pool, str_printf("${%s_${ARCH}}", prefix), free), str_compare, NULL) != -1) {
