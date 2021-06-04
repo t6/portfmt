@@ -59,6 +59,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - portedit set-version: Deal with `PORTREVISION?=` and reset it to 0
 - portedit, portfmt: Ignore `-i` when `-D` was specified
 - portedit bump-epoch: Reset `PORTREVISION` on `PORTEPOCH` bump
+- portclippy: Ignore vars like `CONFIGURE_ARGS_${ARCH}` (assuming `CONFIGURE_ARGS`
+  references it) or `COMMENT_${FLAVOR}` (assuming `COMMENT`) references
+  it.  Fixes #15.
 
 ## [g20210321] - 2021-03-21
 

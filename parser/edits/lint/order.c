@@ -150,7 +150,7 @@ get_variables(struct Mempool *pool, struct Parser *parser, struct Array *tokens)
 		char *var = variable_name(token_variable(t));
 		// Ignore port local variables that start with an _
 		if (var[0] != '_' && array_find(vars, var, str_compare, NULL) == -1 &&
-		    !is_declarative_arch_specfic_var(parser, var)) {
+		    !is_declarative_var(parser, var)) {
 			array_append(vars, var);
 		}
 	}

@@ -89,7 +89,7 @@ int compare_tokens(const void *, const void *, void *);
 int ignore_wrap_col(struct Parser *, struct Variable *);
 int indent_goalcol(struct Variable *);
 int is_comment(struct Token *);
-int is_declarative_arch_specfic_var(struct Parser *, const char *);
+int is_declarative_var(struct Parser *, const char *);
 int is_include_bsd_port_mk(struct Token *);
 int is_known_target(struct Parser *, const char *);
 int is_special_source(const char *);

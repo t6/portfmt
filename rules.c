@@ -1296,7 +1296,7 @@ extract_arch_prefix(const char *var, char **prefix_without_arch, char **prefix_w
 }
 
 static int
-is_declarative_arch_specfic_var_lookup(struct Mempool *pool, struct Parser *parser, const char *var, struct Array **tokens)
+is_declarative_var_lookup(struct Mempool *pool, struct Parser *parser, const char *var, struct Array **tokens)
 {
 	*tokens = NULL;
 	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_FIRST, tokens, NULL) ||
@@ -1309,25 +1309,36 @@ is_declarative_arch_specfic_var_lookup(struct Mempool *pool, struct Parser *pars
 }
 
 int
-is_declarative_arch_specfic_var(struct Parser *parser, const char *var)
+is_declarative_var(struct Parser *parser, const char *var)
 {
 	SCOPE_MEMPOOL(pool);
+
 	char *prefix = NULL;
 	char *prefix_without_osrel = NULL;
 	if (extract_arch_prefix(var, &prefix, &prefix_without_osrel)) {
-		mempool_add_multi(pool, free, prefix, prefix_without_osrel, NULL);
 		struct Array *tokens = NULL;
-		if (is_declarative_arch_specfic_var_lookup(pool, parser, prefix, &tokens)) {
+		if (is_declarative_var_lookup(pool, parser, prefix, &tokens)) {
 			if (array_find(tokens, mempool_add(pool, str_printf("${%s_${ARCH}}", prefix), free), str_compare, NULL) != -1) {
 				return 1;
 			}
 		}
-		if (prefix_without_osrel && is_declarative_arch_specfic_var_lookup(pool, parser, prefix_without_osrel, &tokens)) {
+		if (prefix_without_osrel && is_declarative_var_lookup(pool, parser, prefix_without_osrel, &tokens)) {
 			if (array_find(tokens, mempool_add(pool, str_printf("${%s_${ARCH}_${OSREL:R}}", prefix), free), str_compare, NULL) != -1) {
 				return 1;
 			}
 		}
+	} else if (str_startswith(var, "COMMENT_")) {
+		const char *flavor = var + strlen("COMMENT_");
+		struct Array *tokens = NULL;
+		struct Set *flavors = parser_metadata(parser, PARSER_METADATA_FLAVORS);
+		if (set_contains(flavors, flavor) &&
+		    parser_lookup_variable(parser, "COMMENT", PARSER_LOOKUP_DEFAULT, &tokens, NULL) &&
+		    mempool_add(pool, tokens, array_free) &&
+		    array_find(tokens, "${COMMENT_${FLAVOR}}", str_compare, NULL) != -1) {
+			return 1;
+		}
 	}
+
 	return 0;
 }
 

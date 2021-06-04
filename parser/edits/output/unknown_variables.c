@@ -160,7 +160,7 @@ PARSER_EDIT(output_unknown_variables)
 		char *name = variable_name(token_variable(t));
 		struct UnknownVariable varskey = { .name = name, .hint = NULL };
 		if (variable_order_block(parser, name, NULL) == BLOCK_UNKNOWN &&
-		    !is_declarative_arch_specfic_var(parser, name) &&
+		    !is_declarative_var(parser, name) &&
 		    !set_contains(vars, &varskey) &&
 		    (param->keyfilter == NULL || param->keyfilter(parser, name, param->keyuserdata))) {
 			set_add(vars, var_new(name, NULL));
