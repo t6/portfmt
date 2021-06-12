@@ -39,7 +39,6 @@
 #include <errno.h>
 #include <math.h>
 #include <regex.h>
-#define _WITH_GETLINE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +48,7 @@
 #include <libias/array.h>
 #include <libias/diff.h>
 #include <libias/diffutil.h>
+#include <libias/io.h>
 #include <libias/map.h>
 #include <libias/mempool.h>
 #include <libias/set.h>
@@ -1574,21 +1574,12 @@ parser_read_from_file(struct Parser *parser, FILE *fp)
 		return parser->error;
 	}
 
-	ssize_t linelen;
-	size_t linecap = 0;
-	char *line = NULL;
-	while ((linelen = getline(&line, &linecap, fp)) > 0) {
-		if (linelen > 0 && line[linelen - 1] == '\n') {
-			line[linelen - 1] = 0;
-		}
+	LINE_FOREACH(fp, line) {
 		parser_read_line(parser, line);
 		if (parser->error != PARSER_ERROR_OK) {
-			free(line);
 			return parser->error;
 		}
 	}
-
-	free(line);
 
 	return PARSER_ERROR_OK;
 }

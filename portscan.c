@@ -51,8 +51,11 @@
 
 #include <libias/array.h>
 #include <libias/diff.h>
+#include <libias/io.h>
 #include <libias/map.h>
 #include <libias/mempool.h>
+#include <libias/mempool/dir.h>
+#include <libias/mempool/file.h>
 #include <libias/set.h>
 #include <libias/str.h>
 #include <libias/util.h>
@@ -192,42 +195,35 @@ add_error(struct Set *errors, char *msg)
 DIR *
 diropenat(struct Mempool *pool, int root, const char *path)
 {
-	int fd = openat(root, path, O_RDONLY | O_DIRECTORY);
-	if (fd == -1) {
+	DIR *dir = mempool_opendirat(pool, root, path);
+	if (dir == NULL) {
 		return NULL;
 	}
+
 #if HAVE_CAPSICUM
-	if (caph_limit_stream(fd, CAPH_READ | CAPH_READDIR) < 0) {
+	if (caph_limit_stream(dirfd(dir), CAPH_READ | CAPH_READDIR) < 0) {
 		err(1, "caph_limit_stream: %s", path);
 	}
 #endif
 
-	DIR *dir = fdopendir(fd);
-	if (dir == NULL) {
-		close(fd);
-	}
-	return mempool_add(pool, dir, closedir);
+	return dir;
 }
 
 FILE *
 fileopenat(struct Mempool *pool, int root, const char *path)
 {
-	int fd = openat(root, path, O_RDONLY);
-	if (fd == -1) {
+	FILE *f = mempool_fopenat(pool, root, path, "r", 0);
+	if (f == NULL) {
 		return NULL;
 	}
+
 #if HAVE_CAPSICUM
-	if (caph_limit_stream(fd, CAPH_READ) < 0) {
+	if (caph_limit_stream(fileno(f), CAPH_READ) < 0) {
 		err(1, "caph_limit_stream: %s", path);
 	}
 #endif
 
-	FILE *f = fdopen(fd, "r");
-	if (f == NULL) {
-		close(fd);
-	}
-
-	return mempool_add(pool, f, fclose);
+	return f;
 }
 
 void
@@ -273,8 +269,7 @@ lookup_subdirs(int portsdir, const char *category, const char *path, enum ScanFl
 			array_append(error_origins, str_dup(NULL, category));
 			array_append(error_msgs, str_printf(NULL, "diropenat: %s", strerror(errno)));
 		} else {
-			struct dirent *dp;
-			while ((dp = readdir(dir)) != NULL) {
+			DIR_FOREACH(dir, dp) {
 				if (dp->d_name[0] == '.') {
 					continue;
 				}

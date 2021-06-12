@@ -43,6 +43,7 @@
 
 #include <libias/array.h>
 #include <libias/mempool.h>
+#include <libias/mempool/file.h>
 #include <libias/str.h>
 #include <libias/util.h>
 
@@ -160,9 +161,9 @@ open_file_helper(struct Mempool *extpool, const char *path, const char *mode, ch
 	}
 
 	char *filename = str_printf(pool, "%s/Makefile", path);
-	FILE *f = mempool_add(pool, fopen(filename, mode), fclose);
+	FILE *f = mempool_fopenat(pool, AT_FDCWD, filename, mode, 0644);
 	if (f == NULL) {
-		f = mempool_add(pool, fopen(path, mode), fclose);
+		f = mempool_fopenat(pool, AT_FDCWD, path, mode, 0644);
 		if (f == NULL) {
 			*retval = NULL;
 			return NULL;

@@ -82,8 +82,8 @@ bin/portscan: portscan.o libias/libias.a libportfmt.a
 
 #
 conditional.o: config.h libias/mempool.h libias/str.h libias/util.h conditional.h regexp.h rules.h
-mainutils.o: config.h libias/array.h libias/mempool.h libias/str.h libias/util.h capsicum_helpers.h mainutils.h parser.h
-parser.o: config.h libias/array.h libias/diff.h libias/diffutil.h libias/map.h libias/mempool.h libias/set.h libias/str.h libias/util.h conditional.h parser.h parser/edits.h regexp.h rules.h target.h token.h variable.h parser/constants.h
+mainutils.o: config.h libias/array.h libias/mempool.h libias/mempool/file.h libias/str.h libias/util.h capsicum_helpers.h mainutils.h parser.h
+parser.o: config.h libias/array.h libias/diff.h libias/diffutil.h libias/io.h libias/map.h libias/mempool.h libias/set.h libias/str.h libias/util.h conditional.h parser.h parser/edits.h regexp.h rules.h target.h token.h variable.h parser/constants.h
 parser/edits/edit/bump_revision.o: config.h libias/array.h libias/mempool.h libias/str.h parser.h parser/edits.h rules.h token.h variable.h
 parser/edits/edit/merge.o: config.h libias/array.h libias/mempool.h libias/util.h conditional.h parser.h parser/edits.h rules.h token.h variable.h
 parser/edits/edit/set_version.o: config.h libias/array.h libias/mempool.h libias/str.h parser.h parser/edits.h rules.h token.h variable.h
@@ -105,8 +105,8 @@ parser/edits/refactor/sanitize_eol_comments.o: config.h libias/array.h libias/me
 portclippy.o: config.h libias/mempool.h mainutils.h parser.h parser/edits.h
 portedit.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h libias/util.h mainutils.h parser.h parser/edits.h regexp.h
 portfmt.o: config.h libias/mempool.h mainutils.h parser.h
-portscan.o: config.h libias/array.h libias/diff.h libias/map.h libias/mempool.h libias/set.h libias/str.h libias/util.h capsicum_helpers.h conditional.h mainutils.h parser.h parser/edits.h portscan/log.h portscan/status.h regexp.h token.h variable.h
-portscan/log.o: config.h libias/array.h libias/diff.h libias/mempool.h libias/set.h libias/str.h libias/util.h capsicum_helpers.h portscan/log.h
+portscan.o: config.h libias/array.h libias/diff.h libias/io.h libias/map.h libias/mempool.h libias/mempool/dir.h libias/mempool/file.h libias/set.h libias/str.h libias/util.h capsicum_helpers.h conditional.h mainutils.h parser.h parser/edits.h portscan/log.h portscan/status.h regexp.h token.h variable.h
+portscan/log.o: config.h libias/array.h libias/diff.h libias/io.h libias/mempool.h libias/mempool/file.h libias/set.h libias/str.h libias/util.h capsicum_helpers.h portscan/log.h
 portscan/status.o: config.h portscan/status.h
 regexp.o: config.h libias/mempool.h libias/str.h libias/util.h regexp.h
 rules.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h libias/util.h conditional.h regexp.h rules.h parser.h token.h variable.h generated_rules.h parser/constants.h

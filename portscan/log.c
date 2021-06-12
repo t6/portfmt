@@ -47,7 +47,9 @@
 
 #include <libias/array.h>
 #include <libias/diff.h>
+#include <libias/io.h>
 #include <libias/mempool.h>
+#include <libias/mempool/file.h>
 #include <libias/set.h>
 #include <libias/str.h>
 #include <libias/util.h>
@@ -81,7 +83,6 @@ static char *log_entry_tostring(const struct PortscanLogEntry *, struct Mempool 
 static int log_entry_compare(const void *, const void *, void *);
 static struct PortscanLogEntry *log_entry_parse(struct Mempool *, const char *);
 
-static FILE *log_open(struct PortscanLogDir *, const char *);
 static int log_update_latest(struct PortscanLogDir *, const char *);
 static char *log_filename(const char *, struct Mempool *);
 static char *log_commit(int, struct Mempool *);
@@ -308,23 +309,6 @@ portscan_log_serialize_to_file(struct PortscanLog *log, FILE *out)
 	return 1;
 }
 
-FILE *
-log_open(struct PortscanLogDir *logdir, const char *log_path)
-{
-	int outfd = openat(logdir->fd, log_path, O_CREAT | O_WRONLY, 0644);
-	if (outfd == -1) {
-		return NULL;
-	}
-
-	FILE *f = fdopen(outfd, "w");
-	if (f == NULL) {
-		close(outfd);
-		return NULL;
-	}
-
-	return f;
-}
-
 int
 log_update_latest(struct PortscanLogDir *logdir, const char *log_path)
 {
@@ -363,7 +347,7 @@ portscan_log_serialize_to_dir(struct PortscanLog *log, struct PortscanLogDir *lo
 	SCOPE_MEMPOOL(pool);
 
 	char *log_path = log_filename(logdir->commit, pool);
-	FILE *out = mempool_add(pool, log_open(logdir, log_path), fclose);
+	FILE *out = mempool_fopenat(pool, logdir->fd, log_path, "w", 0644);
 	if (out == NULL) {
 		return 0;
 	}
@@ -388,16 +372,11 @@ log_commit(int portsdir, struct Mempool *pool)
 	}
 
 	char *revision = NULL;
-	char *line = NULL;
-	size_t linecap = 0;
-	ssize_t linelen;
-	if ((linelen = getline(&line, &linecap, fp)) > 0) {
-		if (linelen > 0 && line[linelen - 1] == '\n') {
-			line[linelen - 1] = 0;
-		}
+
+	LINE_FOREACH(fp, line) {
 		revision = str_printf(pool, "%s", line);
+		break;
 	}
-	free(line);
 	pclose(fp);
 
 	if (revision == NULL) {
@@ -445,7 +424,7 @@ portscan_log_dir_open(struct Mempool *extpool, const char *logdir_path, int port
 	}
 
 #if HAVE_CAPSICUM
-	if (caph_limit_stream(logdir, CAPH_CREATE | CAPH_READ | CAPH_SYMLINK) < 0) {
+	if (caph_limit_stream(logdir, CAPH_CREATE | CAPH_FTRUNCATE | CAPH_READ | CAPH_SYMLINK) < 0) {
 		err(1, "caph_limit_stream");
 	}
 #endif
@@ -491,29 +470,20 @@ portscan_log_read_all(struct Mempool *extpool, struct PortscanLogDir *logdir, co
 		return log;
 	}
 
-	int fd = mempool_takefd(pool, openat(logdir->fd, log_path, O_RDONLY));
-	if (fd == -1) {
+	FILE *fp = mempool_fopenat(pool, logdir->fd, log_path, "r", 0);
+	if (fp == NULL) {
 		if (errno == ENOENT) {
 			return log;
 		}
 		err(1, "openat: %s", log_path);
 	}
 
-	FILE *fp = mempool_add(pool, fdopen(fd, "r"), fclose);
-	if (fp == NULL) {
-		return log;
-	}
-
-	ssize_t linelen;
-	size_t linecap = 0;
-	char *line = NULL;
-	while ((linelen = getline(&line, &linecap, fp)) > 0) {
+	LINE_FOREACH(fp, line) {
 		struct PortscanLogEntry *entry = log_entry_parse(log->pool, line);
 		if (entry != NULL) {
 			array_append(log->entries, entry);
 		}
 	}
-	free(line);
 
 	portscan_log_sort(log);
 
