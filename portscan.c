@@ -43,6 +43,7 @@
 #include <getopt.h>
 #include <pthread.h>
 #include <regex.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -132,8 +133,7 @@ struct ScanPortArgs {
 struct CategoryReaderData {
 	int portsdir;
 	struct Array *categories;
-	size_t start;
-	size_t end;
+	atomic_size_t *categories_index;
 	enum ScanFlags flags;
 };
 
@@ -149,8 +149,7 @@ struct CategoryReaderResult {
 struct PortReaderData {
 	int portsdir;
 	struct Array *origins;
-	size_t start;
-	size_t end;
+	atomic_size_t *origins_index;
 	struct Regexp *keyquery;
 	struct Regexp *query;
 	ssize_t editdist;
@@ -608,21 +607,21 @@ scan_port(struct ScanPortArgs *args)
 	}
 }
 
+static char *
+next_workitem(struct Array *items, atomic_size_t *items_index)
+{
+	return array_get(items, (*items_index)++);
+}
+
 void *
 scan_ports_worker(void *userdata)
 {
 	struct PortReaderData *data = userdata;
 	struct Array *retval = array_new();
 
-	if (data->start == data->end) {
-		return retval;
-	}
-
-	assert(data->start < data->end);
-
-	for (size_t i = data->start; i < data->end; i++) {
+	char *origin;
+	while ((origin = next_workitem(data->origins, data->origins_index))) {
 		portscan_status_print();
-		const char *origin = array_get(data->origins, i);
 		struct Mempool *scanpool = mempool_new();
 		const char *path = str_printf(scanpool, "%s/Makefile", origin);
 		struct ScanResult *result = mempool_alloc(scanpool, sizeof(struct ScanResult));
@@ -661,9 +660,9 @@ lookup_origins_worker(void *userdata)
 	result->unsorted = array_new();
 	result->origins = array_new();
 
-	for (size_t i = data->start; i < data->end; i++) {
+	char *category;
+	while ((category = next_workitem(data->categories, data->categories_index))) {
 		portscan_status_print();
-		char *category = array_get(data->categories, i);
 		char *path = str_printf(pool, "%s/Makefile", category);
 		lookup_subdirs(data->portsdir, category, path, data->flags, result->origins, result->nonexistent, result->unhooked, result->unsorted, result->error_origins, result->error_msgs);
 		portscan_status_inc();
@@ -690,22 +689,16 @@ lookup_origins(struct Mempool *pool, int portsdir, enum ScanFlags flags, struct 
 		err(1, "sysconf");
 	}
 	pthread_t *tid = xrecallocarray(NULL, 0, n_threads, sizeof(pthread_t));
-	size_t start = 0;
-	size_t step = array_len(categories) / n_threads + 1;
-	size_t end = MIN(start + step, array_len(categories));
+	atomic_size_t categories_index = 0;
 	for (ssize_t i = 0; i < n_threads; i++) {
 		struct CategoryReaderData *data = xmalloc(sizeof(struct CategoryReaderData));
 		data->portsdir = portsdir;
 		data->categories = categories;
-		data->start = start;
-		data->end = end;
+		data->categories_index = &categories_index;
 		data->flags = flags;
 		if (pthread_create(&tid[i], NULL, lookup_origins_worker, data) != 0) {
 			err(1, "pthread_create");
 		}
-
-		start = MIN(start + step, array_len(categories));
-		end = MIN(end + step, array_len(categories));
 	}
 
 	struct Array *nonexistent = array_new();
@@ -867,15 +860,12 @@ scan_ports(int portsdir, struct Array *origins, enum ScanFlags flags, struct Reg
 		err(1, "sysconf");
 	}
 	pthread_t *tid = mempool_take(pool, xrecallocarray(NULL, 0, n_threads, sizeof(pthread_t)));
-	size_t start = 0;
-	size_t step = array_len(origins) / n_threads + 1;
-	size_t end = MIN(start + step, array_len(origins));
+	atomic_size_t origins_index = 0;
 	for (ssize_t i = 0; i < n_threads; i++) {
 		struct PortReaderData *data = mempool_alloc(pool, sizeof(struct PortReaderData));
 		data->portsdir = portsdir;
 		data->origins = origins;
-		data->start = start;
-		data->end = end;
+		data->origins_index = &origins_index;
 		data->keyquery = keyquery;
 		data->query = query;
 		data->editdist = editdist;
@@ -884,8 +874,6 @@ scan_ports(int portsdir, struct Array *origins, enum ScanFlags flags, struct Reg
 		if (pthread_create(&tid[i], NULL, scan_ports_worker, data) != 0) {
 			err(1, "pthread_create");
 		}
-		start = MIN(start + step, array_len(origins));
-		end = MIN(end + step, array_len(origins));
 	}
 
 	struct Array *results = mempool_array(pool);
