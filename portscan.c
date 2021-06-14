@@ -1108,16 +1108,18 @@ main(int argc, char *argv[])
 		}
 	}
 
-	int status = 0;
 	portscan_status_reset(PORTSCAN_STATUS_PORTS, array_len(origins));
 	scan_ports(portsdir, origins, flags, keyquery_regexp, query_regexp, editdist, result);
 	if (portscan_log_len(result) > 0) {
 		if (logdir != NULL) {
 			struct PortscanLog *prev_result = portscan_log_read_all(pool, logdir, PORTSCAN_LOG_LATEST);
 			if (portscan_log_compare(prev_result, result)) {
+				if (progressinterval) {
+					portscan_status_reset(PORTSCAN_STATUS_FINISHED, 0);
+					portscan_status_print();
+				}
 				warnx("no changes compared to previous result");
-				status = 2;
-				goto done;
+				return 2;
 			}
 			if (!portscan_log_serialize_to_dir(result, logdir)) {
 				err(1, "portscan_log_serialize_to_dir");
@@ -1134,6 +1136,5 @@ main(int argc, char *argv[])
 		portscan_status_print();
 	}
 
-done:
-	return status;
+	return 0;
 }
