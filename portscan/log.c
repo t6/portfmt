@@ -315,10 +315,10 @@ log_update_latest(struct PortscanLogDir *logdir, const char *log_path)
 	SCOPE_MEMPOOL(pool);
 
 	char *prev = NULL;
-	if (!update_symlink(logdir->fd, log_path, PORTSCAN_LOG_LATEST, pool, &prev)) {
+	if (!symlink_update(logdir->fd, log_path, PORTSCAN_LOG_LATEST, pool, &prev)) {
 		return 0;
 	}
-	if (prev != NULL && !update_symlink(logdir->fd, prev, PORTSCAN_LOG_PREVIOUS, pool, NULL)) {
+	if (prev != NULL && !symlink_update(logdir->fd, prev, PORTSCAN_LOG_PREVIOUS, pool, NULL)) {
 		return 0;
 	}
 	return 1;
@@ -410,13 +410,13 @@ portscan_log_dir_open(struct Mempool *extpool, const char *logdir_path, int port
 			goto error;
 		}
 	} else {
-		char *prev = read_symlink(logdir, PORTSCAN_LOG_PREVIOUS, pool);
+		char *prev = symlink_read(logdir, PORTSCAN_LOG_PREVIOUS, pool);
 		if (prev == NULL &&
 		    symlinkat(PORTSCAN_LOG_INIT, logdir, PORTSCAN_LOG_PREVIOUS) == -1) {
 			goto error;
 		}
 
-		char *latest = read_symlink(logdir, PORTSCAN_LOG_LATEST, pool);
+		char *latest = symlink_read(logdir, PORTSCAN_LOG_LATEST, pool);
 		if (latest == NULL &&
 		    symlinkat(PORTSCAN_LOG_INIT, logdir, PORTSCAN_LOG_LATEST) == -1) {
 			goto error;
@@ -459,12 +459,12 @@ portscan_log_read_all(struct Mempool *extpool, struct PortscanLogDir *logdir, co
 
 	struct PortscanLog *log = portscan_log_new(extpool);
 
-	char *buf = read_symlink(logdir->fd, log_path, pool);
+	char *buf = symlink_read(logdir->fd, log_path, pool);
 	if (buf == NULL) {
 		if (errno == ENOENT) {
 			return log;
 		} else if (errno != EINVAL) {
-			err(1, "read_symlink: %s", log_path);
+			err(1, "symlink_read: %s", log_path);
 		}
 	} else if (strcmp(buf, PORTSCAN_LOG_INIT) == 0) {
 		return log;
