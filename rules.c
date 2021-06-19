@@ -2213,7 +2213,7 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 			if (!(parser_settings(parser).behavior & PARSER_ALLOW_FUZZY_MATCHING) &&
 			    !parser_metadata(parser, PARSER_METADATA_MASTERDIR)) {
 				struct Set *uses = parser_metadata(parser, PARSER_METADATA_USES);
-				for (; variable_order_[i].uses[count] && count < nitems(variable_order_[i].uses); count++);
+				for (; count < nitems(variable_order_[i].uses) && variable_order_[i].uses[count]; count++);
 				if (count > 0) {
 					satisfies_uses = 0;
 					for (size_t j = 0; j < count; j++) {
