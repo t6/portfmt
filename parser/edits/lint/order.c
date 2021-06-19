@@ -212,7 +212,7 @@ get_hint(struct Mempool *pool, struct Parser *parser, const char *var, enum Bloc
 {
 	char *hint = NULL;
 	if (uses_candidates) {
-		struct Array *uses = mempool_add(pool, set_values(uses_candidates), array_free);
+		struct Array *uses = set_values(uses_candidates, pool);
 		char *buf = str_join(pool, uses, " ");
 		if (set_len(uses_candidates) > 1) {
 			hint = str_printf(pool, "missing one of USES=%s ?", buf);
@@ -221,7 +221,7 @@ get_hint(struct Mempool *pool, struct Parser *parser, const char *var, enum Bloc
 		}
 	} else if (block == BLOCK_UNKNOWN) {
 		char *uppervar = str_map(pool, var, strlen(var), toupper);
-		if (variable_order_block(parser, uppervar, NULL) != BLOCK_UNKNOWN) {
+		if (variable_order_block(parser, uppervar, NULL, NULL) != BLOCK_UNKNOWN) {
 			hint = str_printf(pool, "did you mean %s ?", uppervar);
 		}
 	}
@@ -240,7 +240,7 @@ variable_list(struct Mempool *pool, struct Parser *parser, struct Array *tokens)
 	int flag = 0;
 	ARRAY_FOREACH(vars, char *, var) {
 		struct Set *uses_candidates = NULL;
-		block = variable_order_block(parser, var, &uses_candidates);
+		block = variable_order_block(parser, var, pool, &uses_candidates);
 		if (block != last_block) {
 			if (flag && block != last_block) {
 				row(pool, output, "", NULL);
@@ -295,7 +295,7 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 	enum BlockType last_block = BLOCK_UNKNOWN;
 	int flag = 0;
 	ARRAY_FOREACH(vars, char *, var) {
-		if ((block = variable_order_block(parser, var, &uses_candidates)) != BLOCK_UNKNOWN) {
+		if ((block = variable_order_block(parser, var, pool, &uses_candidates)) != BLOCK_UNKNOWN) {
 			if (block != last_block) {
 				if (flag && block != last_block) {
 					row(pool, target, "", NULL);
@@ -336,7 +336,7 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 	}
 	ARRAY_FOREACH(unknowns, char *, var) {
 		struct Set *uses_candidates = NULL;
-		enum BlockType block = variable_order_block(parser, var, &uses_candidates);
+		enum BlockType block = variable_order_block(parser, var, pool, &uses_candidates);
 		char *hint = get_hint(pool, parser, var, block, uses_candidates);
 		row(pool, target, var, hint);
 	}
@@ -367,9 +367,9 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 		}
 		MAP_FOREACH(group, char *, name, struct Array *, hints) {
 			struct Set *uses_candidates = NULL;
-			variable_order_block(parser, name, &uses_candidates);
+			variable_order_block(parser, name, pool, &uses_candidates);
 			if (uses_candidates) {
-				struct Array *uses = set_values(uses_candidates);
+				struct Array *uses = set_values(uses_candidates, pool);
 				char *buf = str_join(pool, uses, " ");
 				char *hint = NULL;
 				if (set_len(uses_candidates) > 1) {
@@ -377,7 +377,6 @@ check_variable_order(struct Parser *parser, struct Array *tokens, int no_color)
 				} else {
 					hint = str_printf(pool, "missing USES=%s ?", buf);
 				}
-				set_free(uses_candidates);
 				array_append(hints, hint);
 			}
 			if (array_len(hints) > 0) {

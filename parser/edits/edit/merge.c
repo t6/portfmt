@@ -217,7 +217,7 @@ find_insert_point_generic(struct Parser *parser, struct Array *ptokens, struct V
 		}
 
 		char *a = variable_name(token_variable(t));
-		enum BlockType block = variable_order_block(parser, a, NULL);
+		enum BlockType block = variable_order_block(parser, a, NULL, NULL);
 		char *b = variable_name(var);
 		int cmp = compare_order(&a, &b, parser);
 		if (cmp < 0) {
@@ -238,7 +238,7 @@ static ssize_t
 find_insert_point_same_block(struct Parser *parser, struct Array *ptokens, struct Variable *var, enum BlockType *block_before_var)
 {
 	ssize_t insert_after = INSERT_VARIABLE_NO_POINT_FOUND;
-	enum BlockType block_var = variable_order_block(parser, variable_name(var), NULL);
+	enum BlockType block_var = variable_order_block(parser, variable_name(var), NULL, NULL);
 	*block_before_var = BLOCK_UNKNOWN;
 	ARRAY_FOREACH(ptokens, struct Token *, t) {
 		if (is_include_bsd_port_mk(t)) {
@@ -248,7 +248,7 @@ find_insert_point_same_block(struct Parser *parser, struct Array *ptokens, struc
 		}
 
 		char *a = variable_name(token_variable(t));
-		enum BlockType block = variable_order_block(parser, a, NULL);
+		enum BlockType block = variable_order_block(parser, a, NULL, NULL);
 		if (block != block_var) {
 			continue;
 		}
@@ -293,7 +293,7 @@ prepend_variable(struct Parser *parser, struct Array *ptokens, struct Array *tok
 		if (!empty_line_added) {
 			switch (token_type(t)) {
 			case VARIABLE_START:
-				if (variable_order_block(parser, variable_name(token_variable(t)), NULL) != block_var) {
+				if (variable_order_block(parser, variable_name(token_variable(t)), NULL, NULL) != block_var) {
 					append_empty_line(parser, tokens, token_lines(t));
 					empty_line_added = 1;
 				}
@@ -315,7 +315,7 @@ PARSER_EDIT(insert_variable)
 {
 	struct Variable *var = userdata;
 
-	enum BlockType block_var = variable_order_block(parser, variable_name(var), NULL);
+	enum BlockType block_var = variable_order_block(parser, variable_name(var), NULL, NULL);
 	enum BlockType block_before_var = BLOCK_UNKNOWN;
 	ssize_t insert_after = find_insert_point_same_block(parser, ptokens, var, &block_before_var);
 	if (insert_after < 0) {
@@ -370,7 +370,7 @@ PARSER_EDIT(insert_variable)
 				if (token_type(t) == COMMENT && strcmp(token_data(t), "") == 0) {
 					next = find_next_token(ptokens, t_index, VARIABLE_START, -1, -1);
 					if (next) {
-						enum BlockType block_next = variable_order_block(parser, variable_name(token_variable(next)), NULL);
+						enum BlockType block_next = variable_order_block(parser, variable_name(token_variable(next)), NULL, NULL);
 						if (block_next == block_var) {
 							continue;
 						}

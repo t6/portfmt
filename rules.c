@@ -2133,7 +2133,7 @@ is_shebang_lang(struct Mempool *pool, struct Parser *parser, const char *var, ch
 }
 
 enum BlockType
-variable_order_block(struct Parser *parser, const char *var, struct Set **uses_candidates)
+variable_order_block(struct Parser *parser, const char *var, struct Mempool *extpool, struct Set **uses_candidates)
 {
 	SCOPE_MEMPOOL(pool);
 
@@ -2229,7 +2229,7 @@ variable_order_block(struct Parser *parser, const char *var, struct Set **uses_c
 				return variable_order_[i].block;
 			} else if (count > 0 && uses_candidates) {
 				if (*uses_candidates == NULL) {
-					*uses_candidates = set_new(str_compare, NULL, NULL);
+					*uses_candidates = mempool_set(extpool, str_compare, NULL, NULL);
 				}
 				for (size_t j = 0; j < count; j++) {
 					set_add(*uses_candidates, variable_order_[i].uses[j]);
@@ -2252,8 +2252,8 @@ compare_order(const void *ap, const void *bp, void *userdata)
 	if (strcmp(a, b) == 0) {
 		return 0;
 	}
-	enum BlockType ablock = variable_order_block(parser, a, NULL);
-	enum BlockType bblock = variable_order_block(parser, b, NULL);
+	enum BlockType ablock = variable_order_block(parser, a, NULL, NULL);
+	enum BlockType bblock = variable_order_block(parser, b, NULL, NULL);
 	if (ablock < bblock) {
 		return -1;
 	} else if (ablock > bblock) {
