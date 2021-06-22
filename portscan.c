@@ -711,9 +711,8 @@ lookup_origins(struct Mempool *pool, int portsdir, enum ScanFlags flags, struct 
 		}
 
 		struct CategoryReaderResult *result = data;
-		for (size_t j = 0; j < array_len(result->error_origins); j++) {
-			char *origin = array_get(result->error_origins, j);
-			char *msg = array_get(result->error_msgs, j);
+		ARRAY_FOREACH(result->error_origins, char *, origin) {
+			char *msg = array_get(result->error_msgs, origin_index);
 			array_append(error_origins, origin);
 			array_append(error_msgs, msg);
 		}

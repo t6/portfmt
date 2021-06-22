@@ -556,7 +556,7 @@ parser_tokenize(struct Parser *parser, const char *line, enum TokenType type, si
 			}
 		} else {
 			if (c == ' ' || c == '\t') {
-				token = str_trim(pool, str_substr(pool, line, start, i));
+				token = str_trim(pool, str_slice(pool, line, start, i));
 				if (strcmp(token, "") != 0 && strcmp(token, "\\") != 0) {
 					parser_append_token(parser, type, token);
 				}
@@ -573,7 +573,7 @@ parser_tokenize(struct Parser *parser, const char *line, enum TokenType type, si
 			} else if (c == '\\') {
 				escape = 1;
 			} else if (c == '#') {
-				token = str_trim(pool, str_substr(pool, line, i, strlen(line)));
+				token = str_trim(pool, str_slice(pool, line, i, -1));
 				parser_append_token(parser, type, token);
 				token = NULL;
 				parser->error = PARSER_ERROR_OK;
@@ -585,7 +585,7 @@ parser_tokenize(struct Parser *parser, const char *line, enum TokenType type, si
 		}
 	}
 
-	token = str_trim(pool, str_substr(pool, line, start, i));
+	token = str_trim(pool, str_slice(pool, line, start, i));
 	if (strcmp(token, "") != 0) {
 		parser_append_token(parser, type, token);
 	}
@@ -684,14 +684,13 @@ print_newline_array(struct Parser *parser, struct Mempool *pool, struct Array *a
 	size_t ntabs = ceil((MAX(16, token_goalcol(o)) - strlen(start)) / 8.0);
 	char *sep = str_repeat(pool, "\t", ntabs);
 	const char *end = " \\\n";
-	for (size_t i = 0; i < array_len(arr); i++) {
-		struct Token *o = array_get(arr, i);
-		struct Token *next = array_get(arr, i + 1);
+	ARRAY_FOREACH(arr, struct Token *, o) {
+		struct Token *next = array_get(arr, o_index + 1);
 		char *line = token_data(o);
 		if (!line || strlen(line) == 0) {
 			continue;
 		}
-		if (i == array_len(arr) - 1) {
+		if (o_index == array_len(arr) - 1) {
 			end = "\n";
 		}
 		parser_enqueue_output(parser, sep);
@@ -704,7 +703,7 @@ print_newline_array(struct Parser *parser, struct Mempool *pool, struct Array *a
 		parser_enqueue_output(parser, end);
 		switch (token_type(o)) {
 		case VARIABLE_TOKEN:
-			if (i == 0) {
+			if (o_index == 0) {
 				size_t ntabs = ceil(MAX(16, token_goalcol(o)) / 8.0);
 				sep = str_repeat(pool, "\t", ntabs);
 			}
@@ -1963,16 +1962,14 @@ parser_port_options_add_from_group(struct Parser *parser, const char *groupname)
 
 	struct Array *optmulti = NULL;
 	if (parser_lookup_variable(parser, groupname, PARSER_LOOKUP_DEFAULT, pool, &optmulti, NULL)) {
-		for (size_t i = 0; i < array_len(optmulti); i++) {
-			char *optgroupname = array_get(optmulti, i);
+		ARRAY_FOREACH(optmulti, char *, optgroupname) {
 			if (!set_contains(parser->metadata[PARSER_METADATA_OPTION_GROUPS], optgroupname)) {
 				set_add(parser->metadata[PARSER_METADATA_OPTION_GROUPS], str_dup(NULL, optgroupname));
 			}
 			char *optgroupvar = str_printf(pool, "%s_%s", groupname, optgroupname);
 			struct Array *opts = NULL;
 			if (parser_lookup_variable(parser, optgroupvar, PARSER_LOOKUP_DEFAULT, pool, &opts, NULL)) {
-				for (size_t i = 0; i < array_len(opts); i++) {
-					char *opt = array_get(opts, i);
+				ARRAY_FOREACH(opts, char *, opt) {
 					if (!set_contains(parser->metadata[PARSER_METADATA_OPTIONS], opt)) {
 						set_add(parser->metadata[PARSER_METADATA_OPTIONS], str_dup(NULL, opt));
 					}

@@ -134,7 +134,7 @@ is_git_describe_version(struct Mempool *pool, const char *ver, char **distversio
 	}
 
 	if (distversion != NULL) {
-		*distversion = str_substr(pool, ver, prefix_index + 1, suffix_index);
+		*distversion = str_slice(pool, ver, prefix_index + 1, suffix_index);
 	}
 
 	return 1;

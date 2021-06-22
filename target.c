@@ -87,7 +87,7 @@ consume_token(const char *line, size_t pos, char startchar, char endchar)
 static void
 add_name(struct Mempool *pool, struct Array *names, const char *buf, size_t start, size_t i)
 {
-	char *name = str_trim(pool, str_substr(pool, buf, start, i));
+	char *name = str_trim(pool, str_slice(pool, buf, start, i));
 	if (*name) {
 		array_append(names, name);
 	}

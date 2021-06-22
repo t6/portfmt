@@ -138,7 +138,7 @@ regexp_substr(struct Regexp *regexp, struct Mempool *pool, size_t group)
 	if (group >= regexp->nmatch) {
 		return NULL;
 	}
-	return str_substr(pool, regexp->buf, regexp_start(regexp, group), regexp_end(regexp, group));
+	return str_slice(pool, regexp->buf, regexp_start(regexp, group), regexp_end(regexp, group));
 }
 
 int

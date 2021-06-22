@@ -192,8 +192,7 @@ append_new_variable(struct Parser *parser, struct Array *tokens, struct Variable
 struct Token *
 find_next_token(struct Array *tokens, size_t start, int a1, int a2, int a3)
 {
-	for (size_t i = start; i < array_len(tokens); i++) {
-		struct Token *t = array_get(tokens, i);
+	ARRAY_FOREACH_SLICE(tokens, start, -1, struct Token *, t) {
 		int type = token_type(t);
 		if (type == a1 || type == a2 || type == a3) {
 			return t;
