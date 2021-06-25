@@ -138,6 +138,7 @@ struct CategoryReaderData {
 };
 
 struct CategoryReaderResult {
+	struct Mempool *pool;
 	struct Array *error_origins;
 	struct Array *error_msgs;
 	struct Array *nonexistent;
@@ -157,7 +158,12 @@ struct PortReaderData {
 	struct Map *default_option_descriptions;
 };
 
-static void lookup_subdirs(int, const char *, const char *, enum ScanFlags, struct Array *, struct Array *, struct Array *, struct Array *, struct Array *, struct Array *);
+struct PortReaderResult {
+	struct Mempool *pool;
+	struct Array *scan_results;
+};
+
+static void lookup_subdirs(int, const char *, const char *, enum ScanFlags, struct Mempool *, struct Array *, struct Array *, struct Array *, struct Array *, struct Array *, struct Array *);
 static void scan_port(struct ScanPortArgs *);
 static void *lookup_origins_worker(void *);
 static enum ParserError process_include(struct Parser *, struct Set *, const char *, int, const char *);
@@ -226,14 +232,14 @@ fileopenat(struct Mempool *pool, int root, const char *path)
 }
 
 void
-lookup_subdirs(int portsdir, const char *category, const char *path, enum ScanFlags flags, struct Array *subdirs, struct Array *nonexistent, struct Array *unhooked, struct Array *unsorted, struct Array *error_origins, struct Array *error_msgs)
+lookup_subdirs(int portsdir, const char *category, const char *path, enum ScanFlags flags, struct Mempool *extpool, struct Array *subdirs, struct Array *nonexistent, struct Array *unhooked, struct Array *unsorted, struct Array *error_origins, struct Array *error_msgs)
 {
 	SCOPE_MEMPOOL(pool);
 
 	FILE *in = fileopenat(pool, portsdir, path);
 	if (in == NULL) {
-		array_append(error_origins, str_dup(NULL, path));
-		array_append(error_msgs, str_printf(NULL, "fileopenat: %s", strerror(errno)));
+		array_append(error_origins, str_dup(extpool, path));
+		array_append(error_msgs, str_printf(extpool, "fileopenat: %s", strerror(errno)));
 		return;
 	}
 
@@ -246,14 +252,14 @@ lookup_subdirs(int portsdir, const char *category, const char *path, enum ScanFl
 	struct Parser *parser = parser_new(pool, &settings);
 	enum ParserError error = parser_read_from_file(parser, in);
 	if (error != PARSER_ERROR_OK) {
-		array_append(error_origins, str_dup(NULL, path));
-		array_append(error_msgs, parser_error_tostring(parser, NULL));
+		array_append(error_origins, str_dup(extpool, path));
+		array_append(error_msgs, parser_error_tostring(parser, extpool));
 		return;
 	}
 	error = parser_read_finish(parser);
 	if (error != PARSER_ERROR_OK) {
-		array_append(error_origins, str_dup(NULL, path));
-		array_append(error_msgs, parser_error_tostring(parser, NULL));
+		array_append(error_origins, str_dup(extpool, path));
+		array_append(error_msgs, parser_error_tostring(parser, extpool));
 		return;
 	}
 
@@ -265,8 +271,8 @@ lookup_subdirs(int portsdir, const char *category, const char *path, enum ScanFl
 	if (unhooked && (flags & SCAN_CATEGORIES)) {
 		DIR *dir = diropenat(pool, portsdir, category);
 		if (dir == NULL) {
-			array_append(error_origins, str_dup(NULL, category));
-			array_append(error_msgs, str_printf(NULL, "diropenat: %s", strerror(errno)));
+			array_append(error_origins, str_dup(extpool, category));
+			array_append(error_msgs, str_printf(extpool, "diropenat: %s", strerror(errno)));
 		} else {
 			DIR_FOREACH(dir, dp) {
 				if (dp->d_name[0] == '.') {
@@ -279,7 +285,7 @@ lookup_subdirs(int portsdir, const char *category, const char *path, enum ScanFl
 					continue;
 				}
 				if (array_find(tmp, dp->d_name, str_compare, NULL) == -1) {
-					array_append(unhooked, str_dup(NULL, path));
+					array_append(unhooked, str_dup(extpool, path));
 				}
 			}
 		}
@@ -297,15 +303,15 @@ lookup_subdirs(int portsdir, const char *category, const char *path, enum ScanFl
 			if (nonexistent &&
 			    (fstatat(portsdir, origin, &sb, 0) == -1 ||
 			     !S_ISDIR(sb.st_mode))) {
-				array_append(nonexistent, str_dup(NULL, origin));
+				array_append(nonexistent, str_dup(extpool, origin));
 			}
 		}
-		array_append(subdirs, str_dup(NULL, origin));
+		array_append(subdirs, str_dup(extpool, origin));
 	}
 
 	if ((flags & SCAN_CATEGORIES) && unsorted &&
 	    parser_output_write_to_file(parser, NULL) == PARSER_ERROR_DIFFERENCES_FOUND) {
-		array_append(unsorted, str_dup(NULL, category));
+		array_append(unsorted, str_dup(extpool, category));
 	}
 }
 
@@ -600,7 +606,7 @@ scan_port(struct ScanPortArgs *args)
 		SET_FOREACH(commented_portrevision, char *, comment) {
 			char *msg = str_printf(pool, "commented revision or epoch: %s", comment);
 			if (!set_contains(retval->comments, msg)) {
-				set_add(retval->comments, mempool_forget(pool, msg));
+				set_add(retval->comments, mempool_move(pool, msg, retval->pool));
 			}
 		}
 		set_free(commented_portrevision);
@@ -617,17 +623,19 @@ void *
 scan_ports_worker(void *userdata)
 {
 	struct PortReaderData *data = userdata;
-	struct Array *retval = array_new();
+	struct Mempool *pool = mempool_new();
+	struct PortReaderResult *result = mempool_alloc(pool, sizeof(struct PortReaderResult));
+	result->pool = pool;
+	result->scan_results = mempool_array(pool);
 
 	char *origin;
 	while ((origin = next_workitem(data->origins, data->origins_index))) {
 		portscan_status_print();
-		struct Mempool *scanpool = mempool_new();
-		const char *path = str_printf(scanpool, "%s/Makefile", origin);
-		struct ScanResult *result = mempool_alloc(scanpool, sizeof(struct ScanResult));
-		result->pool = scanpool;
-		result->origin = str_dup(scanpool, origin);
-		result->flags = data->flags;
+		const char *path = str_printf(pool, "%s/Makefile", origin);
+		struct ScanResult *scan_result = mempool_alloc(pool, sizeof(struct ScanResult));
+		scan_result->pool = pool;
+		scan_result->origin = str_dup(pool, origin);
+		scan_result->flags = data->flags;
 		struct ScanPortArgs scan_port_args = {
 			.flags = data->flags,
 			.portsdir = data->portsdir,
@@ -635,144 +643,113 @@ scan_ports_worker(void *userdata)
 			.keyquery = data->keyquery,
 			.query = data->query,
 			.editdist = data->editdist,
-			.result = result,
+			.result = scan_result,
 			.default_option_descriptions = data->default_option_descriptions,
 		};
 		scan_port(&scan_port_args);
 		portscan_status_inc();
-		array_append(retval, result);
+		array_append(result->scan_results, scan_result);
 	}
 
-	return retval;
+	return result;
 }
 
 void *
 lookup_origins_worker(void *userdata)
 {
-	SCOPE_MEMPOOL(pool);
-
 	struct CategoryReaderData *data = userdata;
-	struct CategoryReaderResult *result = xmalloc(sizeof(struct CategoryReaderResult));
-	result->error_origins = array_new();
-	result->error_msgs = array_new();
-	result->nonexistent = array_new();
-	result->unhooked = array_new();
-	result->unsorted = array_new();
-	result->origins = array_new();
+	struct Mempool *pool = mempool_new();
+	struct CategoryReaderResult *result = mempool_alloc(pool, sizeof(struct CategoryReaderResult));
+	result->pool = pool;
+	result->error_origins = mempool_array(pool);
+	result->error_msgs = mempool_array(pool);
+	result->nonexistent = mempool_array(pool);
+	result->unhooked = mempool_array(pool);
+	result->unsorted = mempool_array(pool);
+	result->origins = mempool_array(pool);
 
 	char *category;
 	while ((category = next_workitem(data->categories, data->categories_index))) {
 		portscan_status_print();
 		char *path = str_printf(pool, "%s/Makefile", category);
-		lookup_subdirs(data->portsdir, category, path, data->flags, result->origins, result->nonexistent, result->unhooked, result->unsorted, result->error_origins, result->error_msgs);
+		lookup_subdirs(data->portsdir, category, path, data->flags, result->pool, result->origins, result->nonexistent, result->unhooked, result->unsorted, result->error_origins, result->error_msgs);
 		portscan_status_inc();
 	}
-
-	free(data);
 
 	return result;
 }
 
-struct Array *
-lookup_origins(struct Mempool *pool, int portsdir, enum ScanFlags flags, struct PortscanLog *log)
+static void *
+join_next_thread(pthread_t **tid, ssize_t *n_threads)
 {
-	struct Array *retval = mempool_array(pool);
+	if (*n_threads > 0) {
+		void *data;
+		if (pthread_join(**tid, &data) != 0) {
+			err(1, "pthread_join");
+		} else {
+			(*n_threads)--;
+			(*tid)++;
+			return data;
+		}
+	} else {
+		return NULL;
+	}
+}
 
-	struct Array *categories = array_new();
-	struct Array *error_origins = array_new();
-	struct Array *error_msgs = array_new();
-	lookup_subdirs(portsdir, "", "Makefile", SCAN_NOTHING, categories, NULL, NULL, NULL, error_origins, error_msgs);
+struct Array *
+lookup_origins(struct Mempool *extpool, int portsdir, enum ScanFlags flags, struct PortscanLog *log)
+{
+	SCOPE_MEMPOOL(pool);
+	struct Array *retval = mempool_array(extpool);
+
+	struct Array *categories = mempool_array(pool);
+	struct Array *error_origins = mempool_array(pool);
+	struct Array *error_msgs = mempool_array(pool);
+	lookup_subdirs(portsdir, "", "Makefile", SCAN_NOTHING, pool, categories, NULL, NULL, NULL, error_origins, error_msgs);
+
+	ARRAY_FOREACH(error_origins, char *, origin) {
+		char *msg = array_get(error_msgs, origin_index);
+		portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_ERROR, origin, msg);
+	}
 
 	portscan_status_reset(PORTSCAN_STATUS_CATEGORIES, array_len(categories));
 	ssize_t n_threads = sysconf(_SC_NPROCESSORS_ONLN);
 	if (n_threads < 0) {
 		err(1, "sysconf");
 	}
-	pthread_t *tid = xrecallocarray(NULL, 0, n_threads, sizeof(pthread_t));
 	atomic_size_t categories_index = 0;
+	struct CategoryReaderData data = {
+		.portsdir = portsdir,
+		.categories = categories,
+		.categories_index = &categories_index,
+		.flags = flags,
+	};
+	pthread_t *tid = mempool_take(pool, xrecallocarray(NULL, 0, n_threads, sizeof(pthread_t)));
 	for (ssize_t i = 0; i < n_threads; i++) {
-		struct CategoryReaderData *data = xmalloc(sizeof(struct CategoryReaderData));
-		data->portsdir = portsdir;
-		data->categories = categories;
-		data->categories_index = &categories_index;
-		data->flags = flags;
-		if (pthread_create(&tid[i], NULL, lookup_origins_worker, data) != 0) {
+		if (pthread_create(&tid[i], NULL, lookup_origins_worker, &data) != 0) {
 			err(1, "pthread_create");
 		}
 	}
 
-	struct Array *nonexistent = array_new();
-	struct Array *unhooked = array_new();
-	struct Array *unsorted = array_new();
-	for (ssize_t i = 0; i < n_threads; i++) {
-		void *data;
-		if (pthread_join(tid[i], &data) != 0) {
-			err(1, "pthread_join");
-		}
-
-		struct CategoryReaderResult *result = data;
+	for (struct CategoryReaderResult *result = lookup_origins_worker(&data); result; result = join_next_thread(&tid, &n_threads)) {
 		ARRAY_FOREACH(result->error_origins, char *, origin) {
 			char *msg = array_get(result->error_msgs, origin_index);
-			array_append(error_origins, origin);
-			array_append(error_msgs, msg);
+			portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_ERROR, origin, msg);
 		}
 		ARRAY_FOREACH(result->nonexistent, char *, origin) {
-			array_append(nonexistent, origin);
+			portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_CATEGORY_NONEXISTENT_PORT, origin, "entry without existing directory");
 		}
 		ARRAY_FOREACH(result->unhooked, char *, origin) {
-			array_append(unhooked, origin);
+			portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_CATEGORY_UNHOOKED_PORT, origin, "unhooked port");
 		}
 		ARRAY_FOREACH(result->unsorted, char *, origin) {
-			array_append(unsorted, origin);
+			portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_CATEGORY_UNSORTED, origin, "unsorted category or other formatting issues");
 		}
 		ARRAY_FOREACH(result->origins, char *, origin) {
-			array_append(retval, origin);
+			array_append(retval, mempool_move(result->pool, origin, extpool));
 		}
-		array_free(result->error_origins);
-		array_free(result->error_msgs);
-		array_free(result->nonexistent);
-		array_free(result->unhooked);
-		array_free(result->unsorted);
-		array_free(result->origins);
-		free(result);
+		mempool_free(result->pool);
 	}
-
-	ARRAY_FOREACH(error_origins, char *, origin) {
-		char *msg = array_get(error_msgs, origin_index);
-		portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_ERROR, origin, msg);
-		free(origin);
-		free(msg);
-	}
-	array_free(error_origins);
-	array_free(error_msgs);
-
-	array_sort(nonexistent, str_compare, NULL);
-	ARRAY_FOREACH(nonexistent, char *, origin) {
-		portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_CATEGORY_NONEXISTENT_PORT, origin, "entry without existing directory");
-		free(origin);
-	}
-	array_free(nonexistent);
-
-	array_sort(unhooked, str_compare, NULL);
-	ARRAY_FOREACH(unhooked, char *, origin) {
-		portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_CATEGORY_UNHOOKED_PORT, origin, "unhooked port");
-		free(origin);
-	}
-	array_free(unhooked);
-
-	array_sort(unsorted, str_compare, NULL);
-	ARRAY_FOREACH(unsorted, char *, origin) {
-		portscan_log_add_entry(log, PORTSCAN_LOG_ENTRY_CATEGORY_UNSORTED, origin, "unsorted category or other formatting issues");
-		free(origin);
-	}
-	array_free(unsorted);
-
-	ARRAY_FOREACH(categories, char *, category) {
-		free(category);
-	}
-	array_free(categories);
-
-	free(tid);
 
 	// Get consistent output even when category Makefiles are
 	// not sorted correctly
@@ -860,45 +837,36 @@ scan_ports(int portsdir, struct Array *origins, enum ScanFlags flags, struct Reg
 	}
 	pthread_t *tid = mempool_take(pool, xrecallocarray(NULL, 0, n_threads, sizeof(pthread_t)));
 	atomic_size_t origins_index = 0;
+	struct PortReaderData data = {
+		.portsdir = portsdir,
+		.origins = origins,
+		.origins_index = &origins_index,
+		.keyquery = keyquery,
+		.query = query,
+		.editdist = editdist,
+		.flags = flags,
+		.default_option_descriptions = default_option_descriptions,
+	};
 	for (ssize_t i = 0; i < n_threads; i++) {
-		struct PortReaderData *data = mempool_alloc(pool, sizeof(struct PortReaderData));
-		data->portsdir = portsdir;
-		data->origins = origins;
-		data->origins_index = &origins_index;
-		data->keyquery = keyquery;
-		data->query = query;
-		data->editdist = editdist;
-		data->flags = flags;
-		data->default_option_descriptions = default_option_descriptions;
-		if (pthread_create(&tid[i], NULL, scan_ports_worker, data) != 0) {
+		if (pthread_create(&tid[i], NULL, scan_ports_worker, &data) != 0) {
 			err(1, "pthread_create");
 		}
 	}
 
-	struct Array *results = mempool_array(pool);
-	for (ssize_t i = 0; i < n_threads; i++) {
-		void *data;
-		if (pthread_join(tid[i], &data) != 0) {
-			err(1, "pthread_join");
+	for (struct PortReaderResult *result = scan_ports_worker(&data); result; result = join_next_thread(&tid, &n_threads)) {
+		ARRAY_FOREACH(result->scan_results, struct ScanResult *, r) {
+			portscan_status_print();
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_ERROR, r->origin, r->errors);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_UNKNOWN_VAR, r->origin, r->unknown_variables);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_UNKNOWN_TARGET, r->origin, r->unknown_targets);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_DUPLICATE_VAR, r->origin, r->clones);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_OPTION_DEFAULT_DESCRIPTION, r->origin, r->option_default_descriptions);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_OPTION_GROUP, r->origin, r->option_groups);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_OPTION, r->origin, r->options);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_VARIABLE_VALUE, r->origin, r->variable_values);
+			portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_COMMENT, r->origin, r->comments);
 		}
-		struct Array *result = data;
-		ARRAY_FOREACH(result, struct ScanResult *, r) {
-			array_append(results, r);
-		}
-		array_free(result);
-	}
-	ARRAY_FOREACH(results, struct ScanResult *, r) {
-		portscan_status_print();
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_ERROR, r->origin, r->errors);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_UNKNOWN_VAR, r->origin, r->unknown_variables);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_UNKNOWN_TARGET, r->origin, r->unknown_targets);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_DUPLICATE_VAR, r->origin, r->clones);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_OPTION_DEFAULT_DESCRIPTION, r->origin, r->option_default_descriptions);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_OPTION_GROUP, r->origin, r->option_groups);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_OPTION, r->origin, r->options);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_VARIABLE_VALUE, r->origin, r->variable_values);
-		portscan_log_add_entries(retval, PORTSCAN_LOG_ENTRY_COMMENT, r->origin, r->comments);
-		mempool_free(r->pool);
+		mempool_free(result->pool);
 	}
 }
 
