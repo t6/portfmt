@@ -25,47 +25,46 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#pragma once
 
-struct Array;
-struct Mempool;
-struct Parser;
-enum ParserError;
-enum ParserMergeBehavior;
+#include "config.h"
 
-struct ParserEdit {
-	struct Parser *subparser;
-	const char *arg1;
-	enum ParserMergeBehavior merge_behavior;
-};
+#include <regex.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
-struct ParserEditOutput {
-	int (*keyfilter)(struct Parser *, const char *, void *);
-	void *keyuserdata;
-	int (*filter)(struct Parser *, const char *, void *);
-	void *filteruserdata;
-	void (*callback)(struct Mempool *, const char *, const char *, const char *, void *);
-	void *callbackuserdata;
-	int found;
-};
+#include <libias/array.h>
 
-PARSER_EDIT(edit_bump_revision);
-PARSER_EDIT(edit_merge);
-PARSER_EDIT(edit_set_version);
-PARSER_EDIT(kakoune_select_object_on_line);
-PARSER_EDIT(lint_bsd_port);
-PARSER_EDIT(lint_clones);
-PARSER_EDIT(lint_commented_portrevision);
-PARSER_EDIT(lint_order);
-PARSER_EDIT(output_conditional_token);
-PARSER_EDIT(output_target_command_token);
-PARSER_EDIT(output_unknown_targets);
-PARSER_EDIT(output_unknown_variables);
-PARSER_EDIT(output_variable_value);
-PARSER_EDIT(refactor_collapse_adjacent_variables);
-PARSER_EDIT(refactor_dedup_tokens);
-PARSER_EDIT(refactor_remove_consecutive_empty_lines);
-PARSER_EDIT(refactor_sanitize_append_modifier);
-PARSER_EDIT(refactor_sanitize_cmake_args);
-PARSER_EDIT(refactor_sanitize_comments);
-PARSER_EDIT(refactor_sanitize_eol_comments);
+#include "parser.h"
+#include "parser/edits.h"
+#include "token.h"
+
+PARSER_EDIT(output_conditional_token)
+{
+	struct ParserEditOutput *param = userdata;
+	if (param == NULL) {
+		parser_set_error(parser, PARSER_ERROR_INVALID_ARGUMENT, "missing parameter");
+		return NULL;
+	}
+
+	param->found = 0;
+
+	ARRAY_FOREACH(ptokens, struct Token *, t) {
+		switch (token_type(t)) {
+		case CONDITIONAL_TOKEN:
+			if (token_data(t) &&
+			    (param->filter == NULL || param->filter(parser, token_data(t), param->filteruserdata))) {
+				param->found = 1;
+				if (param->callback) {
+					param->callback(extpool, token_data(t), token_data(t), NULL, param->callbackuserdata);
+				}
+			}
+			break;
+		default:
+			break;
+		}
+	}
+
+	return NULL;
+}
+

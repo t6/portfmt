@@ -103,6 +103,8 @@ static struct ParserEdits parser_edits[] = {
 	{ "lint.clones", lint_clones },
 	{ "lint.commented-portrevision", lint_commented_portrevision },
 	{ "lint.order", lint_order },
+	{ "output.conditional-token", output_conditional_token },
+	{ "output.target-command-token", output_target_command_token },
 	{ "output.unknown-targets", output_unknown_targets },
 	{ "output.unknown-variables", output_unknown_variables },
 	{ "output.variable-value", output_variable_value },

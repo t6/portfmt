@@ -129,6 +129,7 @@ check_opthelper(struct Parser *parser, struct Mempool *extpool, struct ParserEdi
 		}
 		struct UnknownVariable varskey = { .name = name, .hint = var };
 		if (variable_order_block(parser, name, NULL, NULL) == BLOCK_UNKNOWN &&
+		    !is_declarative_var(parser, name) &&
 		    !set_contains(vars, &varskey) &&
 		    (param->keyfilter == NULL || param->keyfilter(parser, name, param->keyuserdata))) {
 			set_add(vars, var_new(name, var));

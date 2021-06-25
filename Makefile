@@ -23,6 +23,8 @@ OBJS=		conditional.o \
 		parser/edits/lint/clones.o \
 		parser/edits/lint/commented_portrevision.o \
 		parser/edits/lint/order.o \
+		parser/edits/output/conditional_token.o \
+		parser/edits/output/target_command_token.o \
 		parser/edits/output/unknown_targets.o \
 		parser/edits/output/unknown_variables.o \
 		parser/edits/output/variable_value.o \
@@ -92,6 +94,8 @@ parser/edits/lint/bsd_port.o: config.h libias/array.h libias/str.h parser.h pars
 parser/edits/lint/clones.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h libias/util.h conditional.h parser.h parser/edits.h token.h variable.h
 parser/edits/lint/commented_portrevision.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h libias/util.h parser.h parser/edits.h token.h
 parser/edits/lint/order.o: config.h libias/array.h libias/diff.h libias/map.h libias/mempool.h libias/set.h libias/str.h libias/util.h conditional.h parser.h parser/edits.h rules.h target.h token.h variable.h
+parser/edits/output/conditional_token.o: config.h libias/array.h parser.h parser/edits.h token.h
+parser/edits/output/target_command_token.o: config.h libias/array.h parser.h parser/edits.h target.h token.h
 parser/edits/output/unknown_targets.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h parser.h parser/edits.h rules.h target.h token.h
 parser/edits/output/unknown_variables.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h libias/util.h parser.h parser/edits.h rules.h token.h variable.h
 parser/edits/output/variable_value.o: config.h libias/array.h libias/str.h parser.h parser/edits.h token.h variable.h
@@ -109,7 +113,7 @@ portscan.o: config.h libias/array.h libias/diff.h libias/io.h libias/map.h libia
 portscan/log.o: config.h libias/array.h libias/diff.h libias/io.h libias/mempool.h libias/mempool/file.h libias/set.h libias/str.h libias/util.h capsicum_helpers.h portscan/log.h
 portscan/status.o: config.h portscan/status.h
 regexp.o: config.h libias/mempool.h libias/str.h libias/util.h regexp.h
-rules.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h libias/util.h conditional.h regexp.h rules.h parser.h token.h variable.h generated_rules.h parser/constants.h
+rules.o: config.h libias/array.h libias/mempool.h libias/set.h libias/str.h libias/util.h conditional.h regexp.h rules.h parser.h parser/edits.h token.h variable.h generated_rules.h parser/constants.h
 target.o: config.h libias/array.h libias/mempool.h libias/str.h libias/util.h target.h
 token.o: config.h libias/str.h libias/util.h conditional.h target.h token.h variable.h
 variable.o: config.h libias/mempool.h libias/str.h libias/util.h regexp.h rules.h variable.h

@@ -50,6 +50,7 @@
 #include "regexp.h"
 #include "rules.h"
 #include "parser.h"
+#include "parser/edits.h"
 #include "token.h"
 #include "variable.h"
 
@@ -1334,6 +1335,13 @@ is_declarative_var_lookup(struct Mempool *pool, struct Parser *parser, const cha
 	}
 }
 
+static void
+is_declarative_var_cb(struct Mempool *extpool, const char *key, const char *value, const char *hint, void *userdata)
+{
+	struct Array *tokens = userdata;
+	array_append(tokens, value);
+}
+
 int
 is_declarative_var(struct Parser *parser, const char *var)
 {
@@ -1361,6 +1369,47 @@ is_declarative_var(struct Parser *parser, const char *var)
 		    parser_lookup_variable(parser, "COMMENT", PARSER_LOOKUP_DEFAULT, pool, &tokens, NULL) &&
 		    array_find(tokens, "${COMMENT_${FLAVOR}}", str_compare, NULL) != -1) {
 			return 1;
+		}
+	} else if (str_endswith(var, "_COMMENT")) {
+		const char *flavor = str_slice(pool, var, 0, strlen(var) - strlen("_COMMENT"));
+		struct Array *tokens = NULL;
+		struct Set *flavors = parser_metadata(parser, PARSER_METADATA_FLAVORS);
+		if (set_contains(flavors, flavor) &&
+		    parser_lookup_variable(parser, "COMMENT", PARSER_LOOKUP_DEFAULT, pool, &tokens, NULL) &&
+		    array_find(tokens, "${${FLAVOR}_COMMENT}", str_compare, NULL) != -1) {
+			return 1;
+		}
+	} else {
+		struct Array *tokens = mempool_array(pool);
+		struct ParserEditOutput param = { NULL, NULL, NULL, NULL, is_declarative_var_cb, tokens, 0 };
+		parser_edit(parser, pool, output_target_command_token, &param);
+		parser_edit(parser, pool, output_variable_value, &param);
+		// TODO: This is broken in many ways but will reduce
+		// the number of false positives from portclippy/portscan
+		struct Array *candidates = mempool_array(pool);
+		array_append(candidates, str_printf(pool, "${%s}", var));
+		array_append(candidates, str_printf(pool, "$(%s)", var));
+		array_append(candidates, str_printf(pool, "${%s:", var));
+		ARRAY_FOREACH(tokens, const char *, token) {
+			ARRAY_FOREACH(candidates, const char *, candidate) {
+				if (strstr(token, candidate)) {
+					return 1;
+				}
+			}
+		}
+
+		array_truncate(tokens);
+		parser_edit(parser, pool, output_conditional_token, &param);
+		array_append(candidates, str_printf(pool, "defined(%s)", var));
+		array_append(candidates, str_printf(pool, "!defined(%s)", var));
+		array_append(candidates, str_printf(pool, "empty(%s)", var));
+		array_append(candidates, str_printf(pool, "!empty(%s)", var));
+		ARRAY_FOREACH(tokens, const char *, token) {
+			ARRAY_FOREACH(candidates, const char *, candidate) {
+				if (strstr(token, candidate)) {
+					return 1;
+				}
+			}
 		}
 	}
 
