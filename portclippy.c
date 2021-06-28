@@ -32,6 +32,7 @@
 # include <err.h>
 #endif
 #include <fcntl.h>
+#include <getopt.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,7 +51,7 @@ static void usage(void);
 void
 usage()
 {
-	fprintf(stderr, "usage: portclippy [Makefile]\n");
+	fprintf(stderr, "usage: portclippy [--strict] [Makefile]\n");
 	exit(EX_USAGE);
 }
 
@@ -62,10 +63,26 @@ main(int argc, char *argv[])
 	struct ParserSettings settings;
 
 	parser_init_settings(&settings);
-	settings.behavior = PARSER_OUTPUT_RAWLINES;
+	settings.behavior = PARSER_OUTPUT_RAWLINES | PARSER_CHECK_VARIABLE_REFERENCES;
 
-	argc--;
-	argv++;
+	int strict = 0;
+	struct option longopts[] = {
+		{ "strict", no_argument, &strict, 1 },
+	};
+	char ch;
+	while ((ch = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
+		switch (ch) {
+		case 0:
+			if (strict) {
+				settings.behavior &= ~PARSER_CHECK_VARIABLE_REFERENCES;
+			}
+			break;
+		default:
+			usage();
+		}
+	}
+	argc -= optind;
+	argv += optind;
 
 	FILE *fp_in = stdin;
 	FILE *fp_out = stdout;

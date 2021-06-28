@@ -83,6 +83,7 @@ enum ScanFlags {
 	SCAN_VARIABLE_VALUES = 1 << 6,
 	SCAN_PARTIAL = 1 << 7,
 	SCAN_COMMENTS = 1 << 8,
+	SCAN_STRICT_VARIABLES = 1 << 9,
 };
 
 enum ScanLongopts {
@@ -93,6 +94,7 @@ enum ScanLongopts {
 	SCAN_LONGOPT_OPTION_DEFAULT_DESCRIPTIONS,
 	SCAN_LONGOPT_OPTIONS,
 	SCAN_LONGOPT_PROGRESS,
+	SCAN_LONGOPT_STRICT,
 	SCAN_LONGOPT_UNKNOWN_TARGETS,
 	SCAN_LONGOPT_UNKNOWN_VARIABLES,
 	SCAN_LONGOPT_VARIABLE_VALUES,
@@ -184,6 +186,7 @@ static struct option longopts[SCAN_LONGOPT__N] = {
 	[SCAN_LONGOPT_OPTION_DEFAULT_DESCRIPTIONS] = { "option-default-descriptions", optional_argument, NULL, 1 },
 	[SCAN_LONGOPT_OPTIONS] = { "options", no_argument, NULL, 1 },
 	[SCAN_LONGOPT_PROGRESS] = { "progress", optional_argument, NULL, 1 },
+	[SCAN_LONGOPT_STRICT] = { "strict", no_argument, NULL, 1 },
 	[SCAN_LONGOPT_UNKNOWN_TARGETS] = { "unknown-targets", no_argument, NULL, 1 },
 	[SCAN_LONGOPT_UNKNOWN_VARIABLES] = { "unknown-variables", no_argument, NULL, 1 },
 	[SCAN_LONGOPT_VARIABLE_VALUES] = { "variable-values", optional_argument, NULL, 1 },
@@ -485,6 +488,10 @@ scan_port(struct ScanPortArgs *args)
 	struct ParserSettings settings;
 	parser_init_settings(&settings);
 	settings.behavior = PARSER_OUTPUT_RAWLINES;
+
+	if (!(args->flags & SCAN_STRICT_VARIABLES)) {
+		settings.behavior |= PARSER_CHECK_VARIABLE_REFERENCES;
+	}
 
 	FILE *in = fileopenat(pool, args->portsdir, args->path);
 	if (in == NULL) {
@@ -944,6 +951,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	int strict_variables = 0;
 	for (enum ScanLongopts i = 0; i < SCAN_LONGOPT__N; i++) {
 		if (!opts[i].flag) {
 			continue;
@@ -970,6 +978,9 @@ main(int argc, char *argv[])
 		case SCAN_LONGOPT_PROGRESS:
 			progressinterval = 5;
 			break;
+		case SCAN_LONGOPT_STRICT:
+			strict_variables = 1;
+			break;
 		case SCAN_LONGOPT_UNKNOWN_TARGETS:
 			flags |= SCAN_UNKNOWN_TARGETS;
 			break;
@@ -989,6 +1000,9 @@ main(int argc, char *argv[])
 		flags = SCAN_CATEGORIES | SCAN_CLONES | SCAN_COMMENTS |
 			SCAN_OPTION_DEFAULT_DESCRIPTIONS | SCAN_UNKNOWN_TARGETS |
 			SCAN_UNKNOWN_VARIABLES;
+	}
+	if (strict_variables) {
+		flags |= SCAN_STRICT_VARIABLES;
 	}
 
 	if (portsdir_path == NULL) {

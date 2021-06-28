@@ -1345,6 +1345,10 @@ is_declarative_var_cb(struct Mempool *extpool, const char *key, const char *valu
 int
 is_declarative_var(struct Parser *parser, const char *var)
 {
+	if (!(parser_settings(parser).behavior & PARSER_CHECK_VARIABLE_REFERENCES)) {
+		return 0;
+	}
+
 	SCOPE_MEMPOOL(pool);
 
 	char *prefix = NULL;
