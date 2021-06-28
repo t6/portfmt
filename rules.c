@@ -1324,7 +1324,7 @@ extract_arch_prefix(struct Mempool *pool, const char *var, char **prefix_without
 }
 
 static int
-is_declarative_var_lookup(struct Mempool *pool, struct Parser *parser, const char *var, struct Array **tokens)
+is_referenced_var_lookup(struct Mempool *pool, struct Parser *parser, const char *var, struct Array **tokens)
 {
 	*tokens = NULL;
 	if (parser_lookup_variable(parser, var, PARSER_LOOKUP_FIRST, pool, tokens, NULL) ||
@@ -1336,14 +1336,14 @@ is_declarative_var_lookup(struct Mempool *pool, struct Parser *parser, const cha
 }
 
 static void
-is_declarative_var_cb(struct Mempool *extpool, const char *key, const char *value, const char *hint, void *userdata)
+is_referenced_var_cb(struct Mempool *extpool, const char *key, const char *value, const char *hint, void *userdata)
 {
 	struct Array *tokens = userdata;
 	array_append(tokens, value);
 }
 
 int
-is_declarative_var(struct Parser *parser, const char *var)
+is_referenced_var(struct Parser *parser, const char *var)
 {
 	if (!(parser_settings(parser).behavior & PARSER_CHECK_VARIABLE_REFERENCES)) {
 		return 0;
@@ -1355,12 +1355,12 @@ is_declarative_var(struct Parser *parser, const char *var)
 	char *prefix_without_osrel = NULL;
 	if (extract_arch_prefix(pool, var, &prefix, &prefix_without_osrel)) {
 		struct Array *tokens = NULL;
-		if (is_declarative_var_lookup(pool, parser, prefix, &tokens)) {
+		if (is_referenced_var_lookup(pool, parser, prefix, &tokens)) {
 			if (array_find(tokens, str_printf(pool, "${%s_${ARCH}}", prefix), str_compare, NULL) != -1) {
 				return 1;
 			}
 		}
-		if (prefix_without_osrel && is_declarative_var_lookup(pool, parser, prefix_without_osrel, &tokens)) {
+		if (prefix_without_osrel && is_referenced_var_lookup(pool, parser, prefix_without_osrel, &tokens)) {
 			if (array_find(tokens, str_printf(pool, "${%s_${ARCH}_${OSREL:R}}", prefix), str_compare, NULL) != -1) {
 				return 1;
 			}
@@ -1385,7 +1385,7 @@ is_declarative_var(struct Parser *parser, const char *var)
 		}
 	} else {
 		struct Array *tokens = mempool_array(pool);
-		struct ParserEditOutput param = { NULL, NULL, NULL, NULL, is_declarative_var_cb, tokens, 0 };
+		struct ParserEditOutput param = { NULL, NULL, NULL, NULL, is_referenced_var_cb, tokens, 0 };
 		parser_edit(parser, pool, output_target_command_token, &param);
 		parser_edit(parser, pool, output_variable_value, &param);
 		// TODO: This is broken in many ways but will reduce
