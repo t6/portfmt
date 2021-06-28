@@ -41,6 +41,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - portscan: Replaced `-o <check>` with `--<check>`; `-o <check>`
   will continue to work but is deprecated
 - portedit merge: Ignore variables in conditionals
+- portclippy, portscan: Add check to see if variables are referenced
+  in the Makefile before reporting them as unknown.  This should
+  reduce the number of false positive reports but can be disabled
+  with the new `--strict` option
 
 ### Fixed
 
